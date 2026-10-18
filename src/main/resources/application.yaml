@@ -66,7 +66,19 @@ springdoc:
     tryItOutEnabled: true
   show-actuator: false
 
+
 management:
+  otlp:
+    metrics:
+      export:
+        enabled: true
+        # Pushes the same Micrometer metrics the Prometheus endpoint serves, so Grafana Cloud needs no scraper.
+        # Auth: set MANAGEMENT_OTLP_METRICS_EXPORT_HEADERS_AUTHORIZATION="Basic <base64 instanceId:token>".
+        url: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/metrics
+        step: 30s
+        base-time-unit: seconds
+        resource-attributes:
+          service.name: ${OTEL_SERVICE_NAME:${spring.application.name}}
   metrics:
     tags:
       application: ${spring.application.name}
