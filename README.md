@@ -14,8 +14,8 @@ DB_PASSWORD=... WALLET_DIR=... ./mvnw spring-boot:run
 
 | Env | Default |
 |---|---|
-| `CART_SERVICE_URL` | `http://localhost:8084` |
-| `PAYMENT_SERVICE_URL` | `http://localhost:8085` |
+| `CART_SERVICE_URL` | `https://cart-service-csoc.onrender.com` (use `http://localhost:8084` locally) |
+| `PAYMENT_SERVICE_URL` | `https://payment-service-iyeh.onrender.com` (use `http://localhost:8085` locally) |
 | `INVENTORY_SERVICE_URL` | `https://inventory-manager-8q64.onrender.com` |
 
 Swagger UI: `http://localhost:8086/swagger-ui.html`. Tests (`./mvnw test`) run on H2 in Oracle mode, no database needed.

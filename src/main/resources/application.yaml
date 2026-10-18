@@ -44,7 +44,7 @@ order:
 
 # Downstream services (TDD §12.6: Order -> Cart, Inventory reserve/deduct/release, Payment intents/refunds)
 cart-service:
-  base-url: ${CART_SERVICE_URL:http://localhost:8084}
+  base-url: ${CART_SERVICE_URL:https://cart-service-csoc.onrender.com}
   connect-timeout: 5s
   read-timeout: 30s
 inventory-service:
@@ -52,7 +52,7 @@ inventory-service:
   connect-timeout: 5s
   read-timeout: 30s
 payment-service:
-  base-url: ${PAYMENT_SERVICE_URL:http://localhost:8085}
+  base-url: ${PAYMENT_SERVICE_URL:https://payment-service-iyeh.onrender.com}
   connect-timeout: 5s
   read-timeout: 30s
 
