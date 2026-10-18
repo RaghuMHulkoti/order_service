@@ -42,6 +42,6 @@ public interface OrderRepository extends JpaRepository<OrderEntity, UUID> {
     List<OrderEntity> pageAfterWithStatus(@Param("customerId") UUID customerId, @Param("status") String status,
                                           @Param("before") Instant before, @Param("beforeId") UUID beforeId, Limit limit);
 
-    @Query(value = "SELECT order_number_seq.NEXTVAL FROM DUAL", nativeQuery = true)
+    @Query(value = "SELECT {h-schema}order_number_seq.NEXTVAL FROM DUAL", nativeQuery = true)
     long nextOrderSequence();
 }

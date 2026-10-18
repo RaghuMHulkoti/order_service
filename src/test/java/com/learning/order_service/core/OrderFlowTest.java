@@ -54,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.datasource.hikari.connection-test-query=SELECT 1",
         "spring.datasource.hikari.connection-init-sql=SELECT 1",
         "spring.flyway.enabled=false",
+        "spring.jpa.properties.hibernate.default_schema=PUBLIC",
         "spring.sql.init.mode=always",
         "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql",
         "order.jobs.enabled=false"
