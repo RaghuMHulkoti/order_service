@@ -1,0 +1,237 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CI/CD Pipeline — order_service
+#
+# Triggers:
+#   • push   → main  (runs the full build + push-to-GHCR pipeline)
+#   • PR     → main  (runs tests + image build only, NO push)
+#
+# Registry: GitHub Container Registry (ghcr.io)
+#   Authentication is handled automatically with the built-in GITHUB_TOKEN —
+#   no external secrets or IAM roles required.
+#
+# Published image:
+#   ghcr.io/<owner>/order-service:<version>
+#   ghcr.io/<owner>/order-service:<git-sha>
+#   ghcr.io/<owner>/order-service:latest
+#
+# The tests run on H2 (Oracle mode), so CI never needs the Oracle database or its wallet.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: order-service
+  REGISTRY: ghcr.io
+  JAVA_VERSION: '25'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Test & Build JAR
+  # Runs on every push and PR: ./mvnw clean verify
+  # ───────────────────────────────────────────────────────────────────────────
+  test-and-build:
+    name: Test & Build JAR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven           # caches ~/.m2 between runs
+
+      - name: Run tests and build JAR
+        run: ./mvnw clean verify -B
+
+      - name: Verify JAR exists
+        run: ls -lh target/order_service-*.jar
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/order_service-*.jar
+          retention-days: 1
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Build Docker Image & Smoke-test
+  # Runs after tests pass.
+  # ───────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Build & Smoke-test Docker Image
+    runs-on: ubuntu-latest
+    needs: test-and-build
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }} (for mvn version extraction)
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Extract image metadata
+        id: meta
+        run: |
+          VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          GIT_SHA=$(git rev-parse --short HEAD)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "git_sha=${GIT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Image version : ${VERSION}"
+          echo "Git SHA       : ${GIT_SHA}"
+
+      # Tests are skipped inside Docker because job 1 already ran them.
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
+            -t ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.git_sha }} \
+            .
+
+      # ── Smoke-test: the container boots and reports healthy ────────────────
+      # There is no Oracle database in CI. Flyway is switched off and no wallet is supplied, so the
+      # app starts without ever opening a connection; the liveness probe does not touch the database.
+      - name: Smoke-test — container starts and is live
+        run: |
+          docker run -d --name order-smoke -p 8086:8086 \
+            -e DB_PASSWORD=ci-placeholder \
+            -e SPRING_FLYWAY_ENABLED=false \
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect -f '{{.State.Status}}' order-smoke)
+            if [ "${STATUS}" != "running" ]; then
+              echo "❌ Container exited — printing logs:"
+              docker logs order-smoke
+              exit 1
+            fi
+            if curl -fsS http://localhost:8086/actuator/health/liveness | grep -q '"UP"'; then
+              echo "✅ Container is running and liveness is UP"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ Liveness never became UP — printing logs:"
+          docker logs order-smoke
+          exit 1
+
+      - name: Print container logs
+        if: always()
+        run: docker logs order-smoke 2>/dev/null || true
+
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm -f order-smoke 2>/dev/null || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Push to GitHub Container Registry
+  # Runs only on push to main (never on PRs).
+  #
+  # No external secrets needed — GITHUB_TOKEN grants ghcr.io write access.
+  # ───────────────────────────────────────────────────────────────────────────
+  push-to-ghcr:
+    name: Push to GitHub Container Registry
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Extract image metadata
+        id: meta
+        run: |
+          VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          GIT_SHA=$(git rev-parse --short HEAD)
+          # Lowercase owner — Docker requires all-lowercase registry paths.
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          GHCR_IMAGE="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
+          echo "version=${VERSION}"       >> "$GITHUB_OUTPUT"
+          echo "git_sha=${GIT_SHA}"       >> "$GITHUB_OUTPUT"
+          echo "ghcr_image=${GHCR_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Image  : ${GHCR_IMAGE}"
+          echo "Version: ${VERSION}"
+          echo "SHA    : ${GIT_SHA}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and tag image for GHCR
+        run: |
+          GHCR_IMAGE="${{ steps.meta.outputs.ghcr_image }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          GIT_SHA="${{ steps.meta.outputs.git_sha }}"
+
+          docker build \
+            -t "${GHCR_IMAGE}:${VERSION}" \
+            -t "${GHCR_IMAGE}:${GIT_SHA}" \
+            -t "${GHCR_IMAGE}:latest" \
+            .
+
+      - name: Push image to GHCR
+        run: |
+          GHCR_IMAGE="${{ steps.meta.outputs.ghcr_image }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          GIT_SHA="${{ steps.meta.outputs.git_sha }}"
+
+          docker push "${GHCR_IMAGE}:${VERSION}"
+          docker push "${GHCR_IMAGE}:${GIT_SHA}"
+          docker push "${GHCR_IMAGE}:latest"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          GHCR_IMAGE="${{ steps.meta.outputs.ghcr_image }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          GIT_SHA="${{ steps.meta.outputs.git_sha }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 🐳 Docker Image Published to GHCR
+
+          | Tag | Image |
+          |-----|-------|
+          | Version | \`${GHCR_IMAGE}:${VERSION}\` |
+          | Git SHA  | \`${GHCR_IMAGE}:${GIT_SHA}\` |
+          | Latest   | \`${GHCR_IMAGE}:latest\` |
+
+          **Pull command:**
+          \`\`\`bash
+          docker pull ${GHCR_IMAGE}:${VERSION}
+          \`\`\`
+          EOF
