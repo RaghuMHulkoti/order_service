@@ -177,6 +177,9 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
   .log { max-height: 220px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+[hidden] { display: none !important; }
+.wrap:not(.locked) > #gate { display: none; }
+.wrap.locked > :not(header):not(#gate) { display: none !important; }
 </style>
 </head>
 <body>
@@ -187,11 +190,28 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
       <p class="role"><b>Responsibility:</b> take a customer from cart to a confirmed, paid order: browse, check out, pay, and watch every step as it happens.</p>
     </div>
     <div class="row">
+      <a id="userLink" href="#" target="_blank" rel="noopener">Account console</a>
       <a href="https://supplier-service-tha0.onrender.com/supplier.html">Supplier portal</a>
+      <span id="who" class="muted" hidden></span>
+      <button id="signOut" type="button" hidden>Sign out</button>
       <span id="conn" class="chip">checking services</span>
       <button id="theme" type="button" aria-label="Switch colour theme">Theme</button>
     </div>
   </header>
+
+  <section id="gate" class="panel" aria-labelledby="h-gate">
+    <h2 id="h-gate">Sign in to continue</h2>
+    <p class="note" style="margin-top:0">This console acts as a signed-in customer. Accounts are kept by the user service.</p>
+    <form id="gForm" novalidate style="display:grid;gap:10px;margin-top:10px">
+      <label>User service <input id="userUrl" autocomplete="off"></label>
+      <div class="grid2">
+        <label>Email <input id="gEmail" type="email" autocomplete="email"></label>
+        <label>Password <input id="gPassword" type="password" autocomplete="current-password"></label>
+      </div>
+      <div class="row"><button class="primary" type="submit">Sign in</button><a id="gCreate" href="#" target="_blank" rel="noopener">Create an account</a></div>
+      <div id="gMsg" class="note" role="status"></div>
+    </form>
+  </section>
 
   <div id="blocked" class="banner" hidden>
     This page cannot reach the services from here (the claude.ai preview blocks outside requests, or CORS is not enabled yet).
@@ -206,10 +226,9 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
       <label>Cart service <input id="cartUrl" autocomplete="off"></label>
       <label>Product service <input id="productUrl" autocomplete="off"></label>
       <label>Payment service <input id="paymentUrl" autocomplete="off"></label>
-      <label>Customer id <input id="userId" autocomplete="off"></label>
+      <label>Signed-in customer id <input id="userId" readonly aria-readonly="true"></label>
     </div>
     <div class="row" style="margin-top:8px">
-      <button id="newUser" type="button">New customer</button>
       <button id="reload" type="button">Reload catalogue and cart</button>
     </div>
   </section>
@@ -307,7 +326,8 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
     order: location.protocol.startsWith("http") ? location.origin : "https://order-service-nf43.onrender.com",
     cart: "https://cart-service-csoc.onrender.com",
     product: "https://product-service-1o2l.onrender.com",
-    payment: "https://payment-service-iyeh.onrender.com"
+    payment: "https://payment-service-iyeh.onrender.com",
+    user: "https://user-service-REPLACE.onrender.com"
   };
   const TERMINAL = ["CONFIRMED", "FAILED", "CANCELLED"];
   const TOKENS = [
@@ -357,12 +377,10 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
   $("cartUrl").value = store.get("oc.cart", DEFAULTS.cart);
   $("productUrl").value = store.get("oc.product", DEFAULTS.product);
   $("paymentUrl").value = store.get("oc.payment", DEFAULTS.payment);
-  $("userId").value = store.get("oc.user", uuid());
   const base = (id) => $(id).value.trim().replace(/\/+$/, "");
-  ["orderUrl", "cartUrl", "productUrl", "paymentUrl", "userId"].forEach((id) => $(id).addEventListener("change", () => {
-    store.set({ orderUrl: "oc.order", cartUrl: "oc.cart", productUrl: "oc.product", paymentUrl: "oc.payment", userId: "oc.user" }[id], $(id).value.trim());
+  ["orderUrl", "cartUrl", "productUrl", "paymentUrl"].forEach((id) => $(id).addEventListener("change", () => {
+    store.set({ orderUrl: "oc.order", cartUrl: "oc.cart", productUrl: "oc.product", paymentUrl: "oc.payment" }[id], $(id).value.trim());
   }));
-  store.set("oc.user", $("userId").value);
   $("liveLink").href = DEFAULTS.order + "/console.html";
   $("liveLink").textContent = DEFAULTS.order + "/console.html";
 
@@ -389,7 +407,7 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
   async function api(service, path, opts) {
     const o = opts || {};
     const url = base(service) + path;
-    const headers = Object.assign({ "X-User-Id": $("userId").value.trim() }, o.headers || {});
+    const headers = Object.assign({ "X-User-Id": (Auth.session() || {}).userId || "" }, o.headers || {});
     if (o.body) headers["Content-Type"] = "application/json";
     const t0 = performance.now();
     let res, text;
@@ -633,11 +651,77 @@ details > *:not(summary) { animation: settle .4s var(--ease); }
     } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Orders unavailable: " + e.message })); }
   }
   $("refreshOrders").addEventListener("click", loadOrders);
-  $("newUser").addEventListener("click", () => { $("userId").value = uuid(); store.set("oc.user", $("userId").value); clearInterval(timer); current = null; $("track").hidden = true; $("trackEmpty").hidden = false; loadCart(); loadOrders(); });
   $("reload").addEventListener("click", () => { checkConnectivity(); loadCatalogue(); loadCart(); loadOrders(); });
 
   drawTokens();
-  checkConnectivity().then(() => { loadCatalogue(); loadCart(); loadOrders(); });
+
+  // ----- sign-in gate: accounts live in the user service, this page only holds the session
+  const Auth = (function () {
+    const KEY = "oc.session";
+    const read = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } };
+    const write = (s) => { try { if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); } catch (e) { /* storage unavailable */ } };
+    const claims = (t) => { try { return JSON.parse(decodeURIComponent(escape(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))))); } catch (e) { return {}; } };
+    const baseUrl = () => document.getElementById("userUrl").value.trim().replace(/\/+$/, "");
+    async function call(base, method, path, body, token) {
+      const headers = {};
+      if (body) headers["Content-Type"] = "application/json";
+      if (token) headers.Authorization = "Bearer " + token;
+      let res;
+      try { res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
+      catch (e) { throw new Error("Cannot reach the user service at " + base.replace(/^https?:\/\//, "") + ". Check the address, and that this site is in its CORS_ALLOWED_ORIGINS."); }
+      const text = await res.text(); let json = null; try { json = JSON.parse(text); } catch (e) { /* not json */ }
+      if (!res.ok) { const err = new Error((json && json.error && json.error.message) || res.statusText || "Request failed"); err.status = res.status; throw err; }
+      return json;
+    }
+    const pack = (t, extra) => Object.assign({ accessToken: t.accessToken, refreshToken: t.refreshToken, userId: claims(t.accessToken).sub, exp: Date.now() + (t.expiresIn || 900) * 1000 }, extra);
+    return {
+      session: read,
+      async signIn(email, password) {
+        const base = baseUrl();
+        const t = await call(base, "POST", "/api/v1/users/login", { email, password });
+        const me = await call(base, "GET", "/api/v1/users/me", null, t.accessToken);
+        write(pack(t, { base, name: [me.firstName, me.lastName].filter(Boolean).join(" ") || me.email, email: me.email }));
+        return read();
+      },
+      async fresh() {
+        const s = read(); if (!s) return null;
+        if (s.exp - Date.now() > 60000) return s;
+        try { const t = await call(s.base, "POST", "/api/v1/users/refresh", { refreshToken: s.refreshToken }); write(pack(t, { base: s.base, name: s.name, email: s.email })); return read(); }
+        catch (e) { if (e.status === 401 || e.status === 403) { write(null); return null; } return s; }
+      },
+      async signOut() {
+        const s = read(); write(null);
+        if (s) { try { await call(s.base, "POST", "/api/v1/users/logout", { refreshToken: s.refreshToken, allSessions: false }, s.accessToken); } catch (e) { /* signed out locally anyway */ } }
+      }
+    };
+  })();
+  function gateView(s) {
+    document.querySelector(".wrap").classList.toggle("locked", !s);
+    document.getElementById("signOut").hidden = !s;
+    document.getElementById("who").hidden = !s;
+    document.getElementById("who").textContent = s ? s.name : "";
+  }
+  function enter(sess) {
+    gateView(sess);
+    $("userId").value = sess.userId;
+    $("userLink").href = sess.base + "/console.html";
+    clearInterval(timer); current = null; $("track").hidden = true; $("trackEmpty").hidden = false;
+    checkConnectivity().then(() => { loadCatalogue(); loadCart(); loadOrders(); });
+  }
+  function leave(msg) { clearInterval(timer); current = null; gateView(null); $("userId").value = ""; if (msg) $("gMsg").textContent = msg; }
+  $("userUrl").value = store.get("oc.userurl", DEFAULTS.user);
+  $("userUrl").addEventListener("change", () => { store.set("oc.userurl", $("userUrl").value.trim()); refreshLinks(); });
+  function refreshLinks() { const b = $("userUrl").value.trim().replace(/\/+$/, ""); $("userLink").href = b + "/console.html"; $("gCreate").href = b + "/console.html"; }
+  refreshLinks();
+  $("gForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault(); const b = ev.target.querySelector("button"); b.disabled = true; $("gMsg").textContent = "Signing in…";
+    try { const sess = await Auth.signIn($("gEmail").value.trim(), $("gPassword").value); $("gPassword").value = ""; $("gMsg").textContent = ""; enter(sess); }
+    catch (e) { $("gMsg").textContent = e.message; } finally { b.disabled = false; }
+  });
+  $("signOut").addEventListener("click", async () => { await Auth.signOut(); leave("Signed out."); });
+  setInterval(async () => { if (Auth.session() && !(await Auth.fresh())) leave("Your session ended. Sign in again."); }, 60000);
+  Auth.fresh().then((sess) => { if (sess) enter(sess); else leave(); });
+
 })();
 </script>
 
