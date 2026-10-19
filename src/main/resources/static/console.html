@@ -92,6 +92,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .status-big strong { font-size: 18px; }
 .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
 .sr { position: absolute; left: -9999px; }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+.card .art { aspect-ratio: 16 / 9; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: rgba(255,255,255,0.92); }
+.card .body { padding: 10px; display: grid; gap: 6px; flex: 1; align-content: start; }
+.card .title { font-weight: 650; overflow-wrap: anywhere; font-size: 13px; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.qty { display: inline-flex; align-items: center; gap: 6px; }
+.qty button { padding: 2px 9px; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.steps li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; color: var(--muted); }
+.steps li.done { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.steps li.current { border-color: var(--accent); color: var(--ink); font-weight: 650; }
+.steps li.failed { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
 @media (prefers-reduced-motion: no-preference) { .chip.live { animation: pulse 1.6s ease-in-out infinite; } }
 @keyframes pulse { 50% { opacity: 0.55; } }
 </style>
@@ -134,7 +148,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="stack">
       <section class="panel" aria-labelledby="h-cat">
         <h2 id="h-cat">1. Catalogue</h2>
-        <div id="catalogue" class="list"><span class="muted">Loading products…</span></div>
+        <div id="catalogue" class="grid"><span class="muted">Loading products…</span></div>
       </section>
 
       <section class="panel" aria-labelledby="h-cart">
@@ -151,7 +165,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           <label>City <input id="aCity" value="Bengaluru"></label>
           <label>Postal code <input id="aZip" value="560001"></label>
           <label>Payment provider
-            <select id="provider"><option>STRIPE</option><option>RAZORPAY</option></select>
+            <select id="provider"><option>RAZORPAY</option><option>STRIPE</option></select>
           </label>
         </div>
         <div class="row" style="margin-top:10px">
@@ -175,6 +189,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           </div>
           <p class="note"><span id="tAmount"></span> · payment attempt <span id="tAttempt">1</span> · <span id="tElapsed"></span></p>
           <div id="tItems" class="list" style="margin-top:8px"></div>
+          <ol id="steps" class="steps" aria-label="Order progress"></ol>
           <h2 style="margin-top:14px">What happened</h2>
           <ol id="timeline" class="timeline"></ol>
         </div>
@@ -182,16 +197,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
       <section class="panel" aria-labelledby="h-pay">
         <h2 id="h-pay">4. Pay</h2>
-        <div id="tokens" class="tokens"></div>
-        <label style="margin-top:8px">Or a custom payment method / token <input id="customToken" placeholder="pm_card_visa" autocomplete="off"></label>
-        <div class="row" style="margin-top:10px">
-          <button id="pay" class="primary" type="button" disabled>Pay order</button>
-          <button id="rzp" type="button" disabled>Pay with Razorpay Checkout</button>
+        <div class="row">
+          <button id="rzp" class="primary" type="button" disabled>Pay with Razorpay</button>
           <button id="cancel" class="danger" type="button" disabled>Cancel order</button>
         </div>
+        <p id="tExpiry" class="note"></p>
         <div id="payResult" class="note" role="status"></div>
-        <p class="note">Razorpay Checkout works for orders placed with the RAZORPAY provider. In test mode use card 4111 1111 1111 1111, any future expiry and any CVV, or UPI <span class="mono">success@razorpay</span>.</p>
-        <p class="note">A declined payment keeps the order open. Pay again with another method: each try opens a new payment, up to three.</p>
+        <p class="note">Razorpay test mode: card 4100 2800 0000 1007, expiry 12/26, CVV 123, or UPI <span class="mono">test@razorpay</span>. No real money moves.</p>
+        <p class="note">If a payment fails the order stays open: pay again. Unpaid orders are cancelled after 15 minutes and the items are released.</p>
+        <details>
+          <summary>Other test payment methods (Stripe and simulated)</summary>
+          <div id="tokens" class="tokens" style="margin-top:8px"></div>
+          <label style="margin-top:8px">Or a custom payment method / token <input id="customToken" placeholder="pm_card_visa" autocomplete="off"></label>
+          <div class="row" style="margin-top:10px"><button id="pay" type="button" disabled>Pay order with selected method</button></div>
+        </details>
       </section>
 
       <section class="panel" aria-labelledby="h-orders">
@@ -244,6 +263,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v); }
     kids.forEach((kid) => n.append(kid));
     return n;
+  }
+  function art(title) {
+    let hash = 0;
+    for (let i = 0; i < title.length; i++) hash = (hash * 31 + title.charCodeAt(i)) % 360;
+    const initials = title.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+    const a = el("div", { class: "art", "aria-hidden": "true", text: initials });
+    a.style.background = "linear-gradient(135deg, hsl(" + hash + " 38% 34%), hsl(" + ((hash + 40) % 360) + " 42% 46%))";
+    return a;
   }
   function statusClass(s) {
     if (s === "CONFIRMED") return "ok";
@@ -335,13 +362,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       box.textContent = "";
       if (!items.length) { box.append(el("span", { class: "muted", text: "No products." })); return; }
       items.forEach((p) => {
-        const qty = el("input", { type: "number", min: "1", value: "1", "aria-label": "Quantity for " + p.title });
-        qty.style.width = "64px";
-        const add = el("button", { type: "button", text: "Add" });
-        add.addEventListener("click", () => addToCart(p.id, Number(qty.value) || 1, add));
-        box.append(el("div", { class: "item" },
-          el("div", {}, el("strong", { text: p.title }), el("div", { class: "muted mono", text: p.sku })),
-          el("div", { class: "row" }, qty, add)));
+        const add = el("button", { type: "button", class: "primary", text: "Add to cart" });
+        add.addEventListener("click", () => addToCart(p.id, 1, add));
+        const attrs = Object.keys(p.attributes || {}).slice(0, 3).map((k) => el("span", { class: "chip", text: String(p.attributes[k]) }));
+        box.append(el("div", { class: "card" }, art(p.title),
+          el("div", { class: "body" }, el("div", { class: "title", text: p.title }), el("div", { class: "tags" }, ...attrs), add)));
       });
     } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Catalogue unavailable: " + e.message })); }
   }
@@ -360,19 +385,28 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       const cart = data.body;
       box.textContent = "";
       if (!cart.items || !cart.items.length) { box.append(el("span", { class: "muted", text: "Empty. Add a product above." })); $("cartTotal").textContent = ""; return; }
+      const change = async (fn) => { try { await fn(); } catch (e) { $("cartTotal").textContent = e.message; } await loadCart(); };
       cart.items.forEach((i) => {
         const rm = el("button", { type: "button", text: "Remove" });
-        rm.addEventListener("click", async () => { try { await api("cartUrl", "/api/v1/cart/items/" + i.itemId, { method: "DELETE" }); await loadCart(); } catch (e) { $("cartTotal").textContent = e.message; } });
+        rm.addEventListener("click", () => change(() => api("cartUrl", "/api/v1/cart/items/" + i.itemId, { method: "DELETE" })));
+        const minus = el("button", { type: "button", "aria-label": "One fewer", text: "−" });
+        minus.disabled = i.quantity <= 1;
+        minus.addEventListener("click", () => change(() => api("cartUrl", "/api/v1/cart/items/" + i.itemId, { method: "PATCH", body: { quantity: i.quantity - 1 } })));
+        const plus = el("button", { type: "button", "aria-label": "One more", text: "+" });
+        plus.addEventListener("click", () => change(() => api("cartUrl", "/api/v1/cart/items/" + i.itemId, { method: "PATCH", body: { quantity: i.quantity + 1 } })));
         box.append(el("div", { class: "item" },
-          el("div", {}, el("strong", { text: i.title }), el("div", { class: "muted", text: i.quantity + " × " + money(i.unitPrice, i.currency) + " · " + i.availability })),
-          rm));
+          el("div", {}, el("strong", { text: i.title }), el("div", { class: "muted", text: money(i.unitPrice, i.currency) + " each · " + i.availability.replace(/_/g, " ").toLowerCase() })),
+          el("div", { class: "row" }, el("span", { class: "qty" }, minus, el("span", { text: String(i.quantity) }), plus), el("strong", { text: money(i.lineTotal, i.currency) }), rm)));
       });
       $("cartTotal").textContent = "Subtotal " + money(cart.subtotal, cart.currency) + (cart.checkoutReady ? " · ready for checkout" : " · not ready: check item availability");
     } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Cart unavailable: " + e.message })); }
   }
 
   // ----- place order
+  const ADDRESS_FIELDS = ["aName", "aLine", "aCity", "aZip"];
+  ADDRESS_FIELDS.forEach((id) => { const v = store.get("oc.addr." + id, ""); if (v) $(id).value = v; });
   function orderBody() {
+    ADDRESS_FIELDS.forEach((id) => store.set("oc.addr." + id, $(id).value));
     return {
       shippingAddress: { name: $("aName").value, line1: $("aLine").value, city: $("aCity").value, state: "KA", postalCode: $("aZip").value, country: "IN" },
       provider: $("provider").value
@@ -423,6 +457,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     if (reserved && !seen.reserved) { seen.reserved = true; note("Stock held by inventory"); }
     if (o.status !== seen.status) { if (seen.status) note("Order is now " + o.status.replace("_", " ").toLowerCase() + (o.cancelReason ? " (" + o.cancelReason + ")" : "")); seen.status = o.status; }
     if (o.paymentId && o.paymentId !== seen.payment) { note("Payment " + (seen.payment ? "retry" : "intent") + " opened " + o.paymentId.slice(0, 8)); seen.payment = o.paymentId; }
+    const stepList = [
+      ["Order placed", "done"],
+      ["Items reserved", o.status === "FAILED" && !reserved ? "failed" : (reserved || o.status !== "CREATED") ? "done" : "current"],
+      ["Awaiting payment", o.status === "CONFIRMED" ? "done" : o.status === "PAYMENT_PENDING" ? "current" : ""],
+      [o.status === "CANCELLED" ? "Cancelled" : o.status === "FAILED" ? "Failed" : "Confirmed", o.status === "CONFIRMED" ? "done" : (o.status === "CANCELLED" || o.status === "FAILED") ? "failed" : ""]
+    ];
+    const stepBox = $("steps"); stepBox.textContent = "";
+    stepList.forEach(([label, state]) => stepBox.append(el("li", { class: state, text: label })));
+    const left = new Date(o.placedAt).getTime() + 15 * 60 * 1000 - Date.now();
+    $("tExpiry").textContent = o.status === "PAYMENT_PENDING"
+      ? (left > 0 ? "Pay within about " + Math.ceil(left / 60000) + " min, or the order is cancelled." : "The payment window is closing; the order may be cancelled at any moment.") : "";
     const done = TERMINAL.includes(o.status);
     $("tLive").hidden = done;
     $("pay").disabled = !(o.status === "PAYMENT_PENDING" && o.paymentId);
@@ -486,8 +531,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       rzp.open();
     } catch (e) { $("payResult").textContent = "Could not start Checkout: " + e.message; }
   });
+  let cancelArmed = null;
   $("cancel").addEventListener("click", async () => {
     if (!current) return;
+    if (!cancelArmed) {
+      $("cancel").textContent = "Click again to confirm cancel";
+      cancelArmed = setTimeout(() => { cancelArmed = null; $("cancel").textContent = "Cancel order"; }, 5000);
+      return;
+    }
+    clearTimeout(cancelArmed); cancelArmed = null; $("cancel").textContent = "Cancel order";
     try { const data = await api("orderUrl", "/api/v1/orders/" + current.orderId + "/cancel", { method: "POST" }); render(data.body); $("payResult").textContent = "Order cancelled. Any open payment is closed through events."; }
     catch (e) { $("payResult").textContent = "Not cancelled: " + e.message; }
   });
