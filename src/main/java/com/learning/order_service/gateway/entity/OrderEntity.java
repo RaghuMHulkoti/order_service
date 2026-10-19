@@ -68,6 +68,10 @@ public class OrderEntity {
     @Column(name = "payment_intent_id")
     private UUID paymentIntentId;
 
+    /** Provider the customer chose at checkout (null = routed by currency); Payment needs it once stock is held. */
+    @Column(name = "payment_provider")
+    private String paymentProvider;
+
     @Column(name = "idempotency_key", nullable = false)
     private String idempotencyKey;
 

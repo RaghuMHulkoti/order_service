@@ -50,4 +50,11 @@ public class OrderOutboxEntity {
     @JdbcTypeCode(SqlTypes.TIMESTAMP)
     @Column(name = "sent_at")
     private Instant sentAt;
+
+    @Column(name = "attempts", nullable = false)
+    @Builder.Default
+    private int attempts = 0;
+
+    @Column(name = "last_error")
+    private String lastError;
 }

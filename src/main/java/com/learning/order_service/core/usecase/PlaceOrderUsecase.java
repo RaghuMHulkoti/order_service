@@ -7,16 +7,12 @@ import com.learning.order_service.core.domain.Order;
 import com.learning.order_service.core.domain.OrderItem;
 import com.learning.order_service.core.domain.OrderStatus;
 import com.learning.order_service.core.domain.WarehouseStock;
-import com.learning.order_service.core.service.lifecycle.OrderLifecycleService;
-import com.learning.order_service.core.service.lifecycle.OrderLifecycleServiceRequest;
 import com.learning.order_service.exception.BusinessRuleViolationException;
 import com.learning.order_service.exception.DependencyUnavailableException;
 import com.learning.order_service.exception.DuplicateOrderException;
 import com.learning.order_service.gateway.CartGateway;
 import com.learning.order_service.gateway.InventoryGateway;
-import com.learning.order_service.gateway.InventoryGateway.ReserveLine;
 import com.learning.order_service.gateway.OrderGateway;
-import com.learning.order_service.gateway.OrderGateway.Transition;
 import com.learning.order_service.gateway.PaymentGateway;
 
 import java.math.BigDecimal;
@@ -26,10 +22,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Starts the checkout saga (TDD §12.6): snapshot the cart into an order, hold the stock, open a payment intent.
- * The customer then pays with the returned client secret (or {@link PayOrderUsecase}); settlement finishes the saga.
- * Each step is recorded on the order, so a failure at any step is compensated and the order ends FAILED. Replaying
- * a request with the same idempotency key returns the first order instead of creating another.
+ * Starts the checkout saga (TDD §12.6): snapshot the cart into an order and publish ORDER_CREATED. The rest runs on
+ * events: Inventory holds the stock ({@link HandleInventoryEventUsecase}), then Payment opens the intent
+ * ({@link HandlePaymentEventUsecase}), and settlement finishes the saga. The order is returned in CREATED.
+ * Replaying a request with the same idempotency key returns the first order instead of creating another; once the
+ * order is waiting for payment, the replay also returns the client secret, which never travels through the bus.
  */
 public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, PlaceOrderUsecase.Response> {
 
@@ -37,7 +34,7 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
                           String provider) implements UsecaseRequest {
     }
 
-    /** {@code clientSecret} is null unless the order is waiting for payment. */
+    /** {@code clientSecret} is null until the order is waiting for payment and its intent exists. */
     public record Response(Order order, String clientSecret, boolean replayed) implements UsecaseResponse {
     }
 
@@ -45,17 +42,15 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
     private final CartGateway carts;
     private final InventoryGateway inventory;
     private final PaymentGateway payments;
-    private final OrderLifecycleService lifecycle;
     private final OrderProperties properties;
     private final Clock clock;
 
     public PlaceOrderUsecase(OrderGateway orders, CartGateway carts, InventoryGateway inventory, PaymentGateway payments,
-                             OrderLifecycleService lifecycle, OrderProperties properties, Clock clock) {
+                             OrderProperties properties, Clock clock) {
         this.orders = orders;
         this.carts = carts;
         this.inventory = inventory;
         this.payments = payments;
-        this.lifecycle = lifecycle;
         this.properties = properties;
         this.clock = clock;
     }
@@ -69,45 +64,23 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
 
         var order = buildOrder(request);
         try {
-            orders.insert(order, clock.instant());
+            orders.insert(order, clock.instant(), properties.reservationTtl().toSeconds());
         } catch (DuplicateOrderException lostRace) {
             return replay(orders.findByIdempotencyKey(request.customerId(), request.idempotencyKey()).orElseThrow(), request);
         }
-
-        try {
-            var reservations = inventory.reserve(order.id(), order.items().stream()
-                    .map(i -> new ReserveLine(i.id(), i.supplierProductId(), i.warehouseId(), i.quantity())).toList(),
-                    properties.reservationTtl());
-            orders.saveReservations(order.id(), reservations);
-            orders.transition(new Transition(order.id(), OrderStatus.CREATED, OrderStatus.PAYMENT_PENDING, null,
-                    "customer", "PAY", "RUNNING", null, null, null, clock.instant()));
-        } catch (RuntimeException e) {
-            compensate(order.id(), reasonFor(e, "RESERVATION_FAILED"), e);
-            throw e;
-        }
-
-        try {
-            var payment = payments.createIntent(order.id(), order.customerId(), order.total(), order.currency(),
-                    request.provider());
-            orders.setPaymentIntent(order.id(), payment.paymentId());
-            return new Response(orders.find(order.id()).orElseThrow(), payment.clientSecret(), false);
-        } catch (RuntimeException e) {
-            compensate(order.id(), reasonFor(e, "PAYMENT_INIT_FAILED"), e);
-            throw e;
-        }
+        return new Response(order, null, false);
     }
 
-    /** Re-asking for an order that is waiting for payment re-reads the (idempotent) intent to hand back its secret. */
+    /**
+     * Re-asking for an order that is waiting for payment re-reads the (idempotent) intent to hand back its secret.
+     * Until the intent event has been applied there is nothing to read, so the caller simply asks again.
+     */
     private Response replay(Order order, Request request) {
-        if (order.status() != OrderStatus.PAYMENT_PENDING) {
+        if (order.status() != OrderStatus.PAYMENT_PENDING || order.paymentIntentId() == null) {
             return new Response(order, null, true);
         }
         var payment = payments.createIntent(order.id(), order.customerId(), order.total(), order.currency(),
                 request.provider());
-        if (order.paymentIntentId() == null) {
-            orders.setPaymentIntent(order.id(), payment.paymentId());
-            order = orders.find(order.id()).orElse(order);
-        }
         return new Response(order, payment.clientSecret(), true);
     }
 
@@ -126,8 +99,8 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
         // Discounts, shipping and tax are not modelled yet, so the total is the subtotal.
         return new Order(UUID.randomUUID(), orders.nextOrderNumber(now), request.customerId(), OrderStatus.CREATED,
                 cart.currency(), subtotal, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, subtotal,
-                request.shippingAddress(), request.billingAddress(), null, request.idempotencyKey(), now, null, null, null,
-                items);
+                request.shippingAddress(), request.billingAddress(), null, request.provider(), request.idempotencyKey(),
+                now, null, null, null, items);
     }
 
     private OrderItem toItem(CartSnapshot.Line line) {
@@ -143,21 +116,5 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
         return new OrderItem(UUID.randomUUID(), line.productId(), line.offerId(), line.supplierId(), line.title(),
                 line.unitPrice(), line.quantity(), line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())),
                 "PENDING", warehouse.warehouseId(), null);
-    }
-
-    /** Undo what the saga did so far. A failure here must not hide the original error; the settlement job retries. */
-    private void compensate(UUID orderId, String reason, RuntimeException original) {
-        try {
-            var order = orders.find(orderId).orElseThrow();
-            lifecycle.execute(OrderLifecycleServiceRequest.builder()
-                    .operation(OrderLifecycleServiceRequest.Operation.ABORT)
-                    .order(order).target(OrderStatus.FAILED).reason(reason).actor("system").build());
-        } catch (RuntimeException e) {
-            original.addSuppressed(e);
-        }
-    }
-
-    private static String reasonFor(RuntimeException e, String fallback) {
-        return e instanceof BusinessRuleViolationException b ? b.getErrorCode() : fallback;
     }
 }

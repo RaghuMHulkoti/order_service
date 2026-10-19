@@ -2,11 +2,13 @@ package com.learning.order_service.gateway;
 
 import com.learning.order_service.core.domain.Address;
 import com.learning.order_service.core.domain.Order;
+import com.learning.order_service.core.domain.OrderEvents;
 import com.learning.order_service.core.domain.OrderItem;
 import com.learning.order_service.core.domain.OrderStatus;
 import com.learning.order_service.core.domain.Reservation;
 import com.learning.order_service.exception.DependencyUnavailableException;
 import com.learning.order_service.exception.DuplicateOrderException;
+import com.learning.order_service.gateway.entity.InboxEventEntity;
 import com.learning.order_service.gateway.entity.OrderEntity;
 import com.learning.order_service.gateway.entity.OrderItemEntity;
 import com.learning.order_service.gateway.entity.OrderOutboxEntity;
@@ -22,6 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,16 +41,19 @@ public class JpaOrderGateway implements OrderGateway {
     private final OrderStatusHistoryRepository history;
     private final SagaStateRepository sagas;
     private final OrderOutboxRepository outbox;
+    private final InboxEventRepository inbox;
     private final TransactionTemplate tx;
     private final JsonMapper json;
 
     public JpaOrderGateway(OrderRepository orders, OrderItemRepository items, OrderStatusHistoryRepository history,
-                           SagaStateRepository sagas, OrderOutboxRepository outbox, TransactionTemplate tx, JsonMapper json) {
+                           SagaStateRepository sagas, OrderOutboxRepository outbox, InboxEventRepository inbox,
+                           TransactionTemplate tx, JsonMapper json) {
         this.orders = orders;
         this.items = items;
         this.history = history;
         this.sagas = sagas;
         this.outbox = outbox;
+        this.inbox = inbox;
         this.tx = tx;
         this.json = json;
     }
@@ -59,7 +65,7 @@ public class JpaOrderGateway implements OrderGateway {
     }
 
     @Override
-    public void insert(Order o, Instant now) {
+    public void insert(Order o, Instant now, long reservationTtlSeconds) {
         try {
             guard("create order", () -> tx.execute(status -> {
                 orders.saveAndFlush(OrderEntity.builder().id(o.id()).orderNumber(o.orderNumber())
@@ -67,7 +73,8 @@ public class JpaOrderGateway implements OrderGateway {
                         .subtotal(o.subtotal()).discount(o.discount()).shippingFee(o.shippingFee()).tax(o.tax())
                         .total(o.total()).shippingAddress(json.writeValueAsString(o.shippingAddress()))
                         .billingAddress(o.billingAddress() == null ? null : json.writeValueAsString(o.billingAddress()))
-                        .idempotencyKey(o.idempotencyKey()).placedAt(o.placedAt()).updatedAt(now).build());
+                        .paymentProvider(o.paymentProvider()).idempotencyKey(o.idempotencyKey()).placedAt(o.placedAt())
+                        .updatedAt(now).build());
                 items.saveAll(o.items().stream().map(i -> OrderItemEntity.builder().id(i.id()).orderId(o.id())
                         .productId(i.productId()).supplierProductId(i.supplierProductId()).supplierId(i.supplierId())
                         .title(i.title()).unitPrice(i.unitPrice()).quantity(i.quantity()).lineTotal(i.lineTotal())
@@ -76,6 +83,8 @@ public class JpaOrderGateway implements OrderGateway {
                 sagas.save(SagaStateEntity.builder().sagaId(UUID.randomUUID()).sagaType("CHECKOUT").orderId(o.id())
                         .currentStep("RESERVE").state("RUNNING").lastEventAt(now).build());
                 sagas.flush();
+                outbox.save(OrderOutboxEntity.builder().aggregateId(o.id()).eventType("ORDER_CREATED")
+                        .payload(createdEvent(o, now, reservationTtlSeconds)).status("PENDING").createdAt(now).build());
                 return true;
             }));
         } catch (DataIntegrityViolationException e) {
@@ -181,6 +190,43 @@ public class JpaOrderGateway implements OrderGateway {
         }
     }
 
+    /** ORDER_CREATED (TDD §13.3), written with the order so the event exists exactly when the order does. */
+    private String createdEvent(Order o, Instant now, long reservationTtlSeconds) {
+        var data = new LinkedHashMap<String, Object>();
+        data.put("orderId", o.id().toString());
+        data.put("orderNumber", o.orderNumber());
+        data.put("customerId", o.customerId().toString());
+        data.put("totalAmount", o.total());
+        data.put("currency", o.currency());
+        data.put("paymentProvider", o.paymentProvider());
+        data.put("reservationTtlSeconds", reservationTtlSeconds);
+        data.put("items", o.items().stream().map(i -> {
+            var line = new LinkedHashMap<String, Object>();
+            line.put("orderItemId", i.id().toString());
+            line.put("supplierProductId", i.supplierProductId().toString());
+            line.put("warehouseId", i.warehouseId().toString());
+            line.put("quantity", i.quantity());
+            line.put("unitPrice", i.unitPrice());
+            return line;
+        }).toList());
+        return OrderEvents.envelope(json, "ORDER_CREATED", now, data);
+    }
+
+    @Override
+    public boolean isEventProcessed(UUID eventId) {
+        return Boolean.TRUE.equals(guard("read inbox", () -> inbox.existsById(eventId)));
+    }
+
+    @Override
+    public void markEventProcessed(UUID eventId, String consumer, Instant now) {
+        try {
+            guard("write inbox", () -> inbox.saveAndFlush(
+                    InboxEventEntity.builder().eventId(eventId).consumer(consumer).receivedAt(now).build()));
+        } catch (DataIntegrityViolationException alreadyRecorded) {
+            // a concurrent delivery of the same event recorded it first
+        }
+    }
+
     private void recordHistory(UUID orderId, OrderStatus from, OrderStatus to, String reason, String actor, Instant at) {
         history.save(OrderStatusHistoryEntity.builder().orderId(orderId).fromStatus(from == null ? null : from.name())
                 .toStatus(to.name()).reason(reason).actor(actor).createdAt(at).build());
@@ -195,7 +241,7 @@ public class JpaOrderGateway implements OrderGateway {
                 e.getCurrency().trim(), e.getSubtotal(), e.getDiscount(), e.getShippingFee(), e.getTax(), e.getTotal(),
                 json.readValue(e.getShippingAddress(), Address.class),
                 e.getBillingAddress() == null ? null : json.readValue(e.getBillingAddress(), Address.class),
-                e.getPaymentIntentId(), e.getIdempotencyKey(), e.getPlacedAt(), e.getConfirmedAt(), e.getCancelledAt(),
+                e.getPaymentIntentId(), e.getPaymentProvider(), e.getIdempotencyKey(), e.getPlacedAt(), e.getConfirmedAt(), e.getCancelledAt(),
                 e.getCancelReason(), lines);
     }
 

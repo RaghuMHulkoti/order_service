@@ -1,6 +1,7 @@
 package com.learning.order_service.core.service.lifecycle;
 
 import com.learning.order_service.core.domain.Order;
+import com.learning.order_service.core.domain.OrderEvents;
 import com.learning.order_service.core.domain.OrderStatus;
 import com.learning.order_service.core.domain.PaymentSnapshot;
 import com.learning.order_service.core.domain.Reservation;
@@ -17,7 +18,6 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.util.LinkedHashMap;
-import java.util.UUID;
 
 /**
  * The two ways a checkout saga ends (TDD §12.6, §12.12):
@@ -30,7 +30,6 @@ import java.util.UUID;
 public class OrderLifecycleService implements Service<OrderLifecycleServiceRequest, OrderLifecycleServiceResponse> {
 
     private static final Logger log = LoggerFactory.getLogger(OrderLifecycleService.class);
-    private static final String PRODUCER = "order-service";
 
     private final OrderGateway orders;
     private final InventoryGateway inventory;
@@ -136,13 +135,6 @@ public class OrderLifecycleService implements Service<OrderLifecycleServiceReque
         if (reason != null) {
             data.put("reason", reason);
         }
-        var envelope = new LinkedHashMap<String, Object>();
-        envelope.put("eventId", UUID.randomUUID().toString());
-        envelope.put("eventType", type);
-        envelope.put("occurredAt", clock.instant().toString());
-        envelope.put("producer", PRODUCER);
-        envelope.put("version", 1);
-        envelope.put("data", data);
-        return json.writeValueAsString(envelope);
+        return OrderEvents.envelope(json, type, clock.instant(), data);
     }
 }

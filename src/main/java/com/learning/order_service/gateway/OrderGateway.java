@@ -23,8 +23,11 @@ public interface OrderGateway {
     /** Next human-readable number, e.g. BZ-26101800042 (day + database sequence). */
     String nextOrderNumber(Instant now);
 
-    /** Inserts the order, its lines, the first history row and the saga row in one transaction. */
-    void insert(Order order, Instant now);
+    /**
+     * Inserts the order, its lines, the first history row, the saga row and the ORDER_CREATED event in one
+     * transaction. Inventory reads the event to hold stock for {@code reservationTtlSeconds}.
+     */
+    void insert(Order order, Instant now, long reservationTtlSeconds);
 
     Optional<Order> find(UUID orderId);
 
@@ -39,6 +42,11 @@ public interface OrderGateway {
     void saveReservations(UUID orderId, List<Reservation> reservations);
 
     void setPaymentIntent(UUID orderId, UUID paymentIntentId);
+
+    /** Consumer-side dedupe (TDD §13.6): true once {@link #markEventProcessed} recorded this event id. */
+    boolean isEventProcessed(UUID eventId);
+
+    void markEventProcessed(UUID eventId, String consumer, Instant now);
 
     /** False when the order is no longer in {@code from}: another request moved it first, nothing was written. */
     boolean transition(Transition transition);

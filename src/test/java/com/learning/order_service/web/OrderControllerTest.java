@@ -55,7 +55,7 @@ class OrderControllerTest {
                 new BigDecimal("50"), 2, new BigDecimal("100"), "RESERVED", UUID.randomUUID(), UUID.randomUUID());
         return new Order(UUID.randomUUID(), "BZ-26101800001", user, status, "INR", new BigDecimal("100"), BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100"), new Address("Asha", "1 MG Road", null, "Bengaluru",
-                null, "560001", "IN", null), null, UUID.randomUUID(), "k", Instant.parse("2026-10-18T10:00:00Z"), null, null,
+                null, "560001", "IN", null), null, UUID.randomUUID(), null, "k", Instant.parse("2026-10-18T10:00:00Z"), null, null,
                 null, List.of(item));
     }
 

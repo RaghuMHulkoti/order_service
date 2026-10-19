@@ -21,6 +21,15 @@ import com.learning.order_service.gateway.OrderGateway;
 import com.learning.order_service.gateway.PaymentGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.learning.order_service.core.domain.Order;
+import com.learning.order_service.core.usecase.HandleInventoryEventUsecase;
+import com.learning.order_service.core.usecase.HandlePaymentEventUsecase;
+import com.learning.order_service.gateway.InventoryGateway.ReserveLine;
+import com.learning.order_service.gateway.OrderOutboxPoller;
+import com.learning.order_service.gateway.OrderOutboxRepository;
+import com.learning.order_service.gateway.messaging.EventPublisher;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -56,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.flyway.enabled=false",
         "spring.jpa.properties.hibernate.default_schema=PUBLIC",
         "spring.sql.init.mode=always",
-        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql",
+        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql,classpath:db/migration/V2__outbox_relay_and_inbox.sql,classpath:db/migration/V3__payment_provider.sql",
         "order.jobs.enabled=false"
 })
 class OrderFlowTest {
@@ -84,20 +93,24 @@ class OrderFlowTest {
     CancelOrderUsecase cancel;
     SettleOpenOrdersUsecase settle;
     ListOrdersUsecase list;
+    HandlePaymentEventUsecase onPaymentEvent;
+    HandleInventoryEventUsecase onInventoryEvent;
 
     @BeforeEach
     void setUp() {
         // the Spring context (and its H2 database) is shared by every test, so start each one empty
-        for (var table : List.of("order_outbox", "saga_state", "order_status_history", "order_items", "orders")) {
+        for (var table : List.of("inbox_events", "order_outbox", "saga_state", "order_status_history", "order_items", "orders")) {
             jdbc.update("DELETE FROM " + table);
         }
         var properties = new OrderProperties(Duration.ofMinutes(15), Duration.ofMinutes(30));
         var lifecycle = new OrderLifecycleService(orders, inventory, payment, cart, json, clock);
-        place = new PlaceOrderUsecase(orders, cart, inventory, payment, lifecycle, properties, clock);
+        place = new PlaceOrderUsecase(orders, cart, inventory, payment, properties, clock);
         pay = new PayOrderUsecase(orders, payment, lifecycle);
         cancel = new CancelOrderUsecase(orders, lifecycle);
         settle = new SettleOpenOrdersUsecase(orders, lifecycle, properties, clock);
         list = new ListOrdersUsecase(orders);
+        onPaymentEvent = new HandlePaymentEventUsecase(orders, lifecycle, json, clock);
+        onInventoryEvent = new HandleInventoryEventUsecase(orders, inventory, lifecycle, json, clock);
 
         cart.lines.add(new CartSnapshot.Line(offerA, productA, UUID.randomUUID(), "Keyboard", 2, new BigDecimal("50.00")));
         cart.lines.add(new CartSnapshot.Line(offerB, productB, UUID.randomUUID(), "Mouse", 1, new BigDecimal("20.50")));
@@ -105,12 +118,56 @@ class OrderFlowTest {
         inventory.stock.put(offerB, 5);
     }
 
+    PlaceOrderUsecase.Request request(String key) {
+        return new PlaceOrderUsecase.Request(customer, key, ADDRESS, null, null);
+    }
+
+    /** Only what the HTTP call does: the order exists in CREATED and ORDER_CREATED is on the outbox. */
+    PlaceOrderUsecase.Response placeOnly(String key) {
+        return place.execute(request(key));
+    }
+
+    /** Places the order, then plays Inventory's and Payment's events by hand; returns what a replay of the POST gives. */
     PlaceOrderUsecase.Response placeOrder(String key) {
-        return place.execute(new PlaceOrderUsecase.Request(customer, key, ADDRESS, null, null));
+        var first = placeOnly(key);
+        if (!first.replayed()) {
+            var reserved = reserve(first.order());
+            assertThat(reserved.outcome()).isEqualTo(HandleInventoryEventUsecase.Outcome.RESERVED);
+            onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(
+                    paymentEvent(UUID.randomUUID(), "PAYMENT_INITIATED", first.order().id())));
+        }
+        return place.execute(request(key));
+    }
+
+    /** What Inventory does on ORDER_CREATED: hold the stock, then answer INVENTORY_RESERVED. */
+    HandleInventoryEventUsecase.Response reserve(Order order) {
+        var held = inventory.reserve(order.id(), order.items().stream().map(i -> new ReserveLine(i.id(),
+                i.supplierProductId(), i.warehouseId(), i.quantity())).toList(), Duration.ofMinutes(30));
+        var lines = held.stream().map(r -> "{\"orderItemId\":\"" + r.orderItemId() + "\",\"reservationId\":\""
+                + r.reservationId() + "\"}").collect(java.util.stream.Collectors.joining(","));
+        return onInventoryEvent.execute(new HandleInventoryEventUsecase.Request("{\"eventId\":\"" + UUID.randomUUID()
+                + "\",\"eventType\":\"INVENTORY_RESERVED\",\"data\":{\"orderId\":\"" + order.id()
+                + "\",\"reservations\":[" + lines + "]}}"));
     }
 
     @Test
-    void placeHoldsStockOpensPaymentAndWaits() {
+    void placeCreatesTheOrderAndLeavesReservingAndPaymentToEvents() {
+        var result = placeOnly("k1");
+
+        var order = result.order();
+        assertThat(order.status()).isEqualTo(OrderStatus.CREATED);
+        assertThat(result.clientSecret()).isNull();
+        assertThat(result.replayed()).isFalse();
+        assertThat(inventory.held).isEmpty();
+        assertThat(payment.createdFor).isEmpty();
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED");
+        var event = json.readTree(jdbc.queryForObject("SELECT payload FROM order_outbox", String.class)).path("data");
+        assertThat(event.path("reservationTtlSeconds").asLong()).isEqualTo(1800);
+        assertThat(event.path("items").get(0).path("warehouseId").asString("")).isNotEmpty();
+    }
+
+    @Test
+    void reservedAndInitiatedOrderWaitsForPaymentAndReplayReturnsTheSecret() {
         var result = placeOrder("k1");
 
         var order = result.order();
@@ -125,9 +182,93 @@ class OrderFlowTest {
             assertThat(i.warehouseId()).isNotNull();
         });
         assertThat(result.clientSecret()).isEqualTo("secret");
-        assertThat(result.replayed()).isFalse();
         assertThat(inventory.held).hasSize(2);
-        assertThat(payment.createdFor).containsExactly(order.id());
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED");
+        var requested = json.readTree(jdbc.queryForObject(
+                "SELECT payload FROM order_outbox WHERE event_type = 'PAYMENT_REQUESTED'", String.class)).path("data");
+        assertThat(requested.path("orderId").asString("")).isEqualTo(order.id().toString());
+        assertThat(requested.path("amount").decimalValue()).isEqualByComparingTo("120.50");
+    }
+
+    @Test
+    void replayBeforeThePaymentIntentExistsReturnsNoSecretYet() {
+        var first = placeOnly("k1");
+        reserve(first.order());
+
+        var replay = placeOnly("k1");
+
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.order().status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(replay.clientSecret()).isNull();
+        assertThat(payment.createdFor).isEmpty();
+    }
+
+    @Test
+    void reservationFailedEventFailsTheOrderAndNothingIsReleased() {
+        var order = placeOnly("k1").order();
+
+        onInventoryEvent.execute(new HandleInventoryEventUsecase.Request("{\"eventId\":\"" + UUID.randomUUID()
+                + "\",\"eventType\":\"INVENTORY_RESERVATION_FAILED\",\"data\":{\"orderId\":\"" + order.id()
+                + "\",\"reason\":\"INSUFFICIENT_STOCK\"}}"));
+
+        assertThat(jdbc.queryForObject("SELECT status || ':' || cancel_reason FROM orders", String.class))
+                .isEqualTo("FAILED:INSUFFICIENT_STOCK");
+        assertThat(inventory.released).isEmpty();
+        assertThat(payment.createdFor).isEmpty();
+    }
+
+    @Test
+    void aReservationThatArrivesAfterTheOrderEndedIsReleasedAgain() {
+        var order = placeOnly("k1").order();
+        cancel.execute(new CancelOrderUsecase.Request(customer, order.id()));
+
+        var late = reserve(order);
+
+        assertThat(late.outcome()).isEqualTo(HandleInventoryEventUsecase.Outcome.LATE_RELEASED);
+        assertThat(inventory.released).hasSize(2);
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.CANCELLED);
+    }
+
+    @Test
+    void aRedeliveredReservationNeverReleasesStockTheOrderAlreadyHolds() {
+        var order = placeOnly("k1").order();
+        reserve(order);
+        var again = reserve(orders.find(order.id()).orElseThrow());
+
+        assertThat(again.outcome()).isEqualTo(HandleInventoryEventUsecase.Outcome.LATE_RELEASED);
+        assertThat(inventory.released).isEmpty();
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+    }
+
+    @Test
+    void paymentThatCouldNotOpenAnIntentFailsTheOrderAndReleasesTheStock() {
+        var order = placeOnly("k1").order();
+        reserve(order);
+
+        onPaymentEvent.execute(new HandlePaymentEventUsecase.Request("{\"eventId\":\"" + UUID.randomUUID()
+                + "\",\"eventType\":\"PAYMENT_FAILED\",\"data\":{\"orderId\":\"" + order.id()
+                + "\",\"failureCode\":\"PAYMENT_PROVIDER_REJECTED\"}}"));
+
+        assertThat(jdbc.queryForObject("SELECT status || ':' || cancel_reason FROM orders", String.class))
+                .isEqualTo("FAILED:PAYMENT_PROVIDER_REJECTED");
+        assertThat(inventory.released).hasSize(2);
+    }
+
+    @Test
+    void duplicateInventoryEventIsSkipped() {
+        var order = placeOnly("k1").order();
+        var held = inventory.reserve(order.id(), order.items().stream().map(i -> new ReserveLine(i.id(),
+                i.supplierProductId(), i.warehouseId(), i.quantity())).toList(), Duration.ofMinutes(30));
+        var lines = held.stream().map(r -> "{\"orderItemId\":\"" + r.orderItemId() + "\",\"reservationId\":\""
+                + r.reservationId() + "\"}").collect(java.util.stream.Collectors.joining(","));
+        var event = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"eventType\":\"INVENTORY_RESERVED\",\"data\":{\"orderId\":\""
+                + order.id() + "\",\"reservations\":[" + lines + "]}}";
+        onInventoryEvent.execute(new HandleInventoryEventUsecase.Request(event));
+
+        var again = onInventoryEvent.execute(new HandleInventoryEventUsecase.Request(event));
+
+        assertThat(again.outcome()).isEqualTo(HandleInventoryEventUsecase.Outcome.DUPLICATE);
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED");
     }
 
     @Test
@@ -143,7 +284,7 @@ class OrderFlowTest {
         assertThat(inventory.deducted).hasSize(2);
         assertThat(inventory.released).isEmpty();
         assertThat(cart.removed).containsExactlyInAnyOrder(offerA, offerB);
-        assertThat(outboxTypes()).containsExactly("ORDER_CONFIRMED");
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED", "ORDER_CONFIRMED");
         assertThat(jdbc.queryForObject("SELECT current_step || '/' || state FROM saga_state", String.class)).isEqualTo("DONE/COMPLETED");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_status_history", Integer.class)).isEqualTo(3);
     }
@@ -172,7 +313,7 @@ class OrderFlowTest {
         assertThat(result.payment().failureCode()).isEqualTo("card_declined");
         assertThat(inventory.released).hasSize(2);
         assertThat(inventory.deducted).isEmpty();
-        assertThat(outboxTypes()).containsExactly("ORDER_FAILED");
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED", "ORDER_FAILED");
         assertThat(cart.removed).isEmpty();
     }
 
@@ -218,27 +359,6 @@ class OrderFlowTest {
         assertThatThrownBy(() -> placeOrder("k1")).isInstanceOfSatisfying(BusinessRuleViolationException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo("INSUFFICIENT_STOCK"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM orders", Integer.class)).isZero();
-    }
-
-    @Test
-    void reservationRaceLostMarksOrderFailedAndHoldsNothing() {
-        inventory.failReserve = new BusinessRuleViolationException("INSUFFICIENT_STOCK", "Insufficient stock to fulfill reservation");
-
-        assertThatThrownBy(() -> placeOrder("k1")).isInstanceOf(BusinessRuleViolationException.class);
-
-        assertThat(jdbc.queryForObject("SELECT status || ':' || cancel_reason FROM orders", String.class))
-                .isEqualTo("FAILED:INSUFFICIENT_STOCK");
-        assertThat(payment.createdFor).isEmpty();
-    }
-
-    @Test
-    void paymentIntentFailureReleasesTheHeldStock() {
-        payment.failCreate = new DependencyUnavailableException("Payment Service unavailable", null);
-
-        assertThatThrownBy(() -> placeOrder("k1")).isInstanceOf(DependencyUnavailableException.class);
-
-        assertThat(jdbc.queryForObject("SELECT status FROM orders", String.class)).isEqualTo("FAILED");
-        assertThat(inventory.released).hasSize(2);
     }
 
     @Test
@@ -352,6 +472,111 @@ class OrderFlowTest {
         assertThat(list.execute(new ListOrdersUsecase.Request(customer, OrderStatus.CONFIRMED, null, 10)).orders()).isEmpty();
         assertThatThrownBy(() -> list.execute(new ListOrdersUsecase.Request(customer, null, "garbage", 10)))
                 .isInstanceOf(BusinessRuleViolationException.class);
+    }
+
+    // ---------------------------------------------------------------- events
+
+    @Test
+    void placingAnOrderWritesOrderCreatedWithItsLinesToTheOutbox() {
+        var order = placeOrder("k1").order();
+
+        var payload = jdbc.queryForObject("SELECT payload FROM order_outbox WHERE event_type = 'ORDER_CREATED'", String.class);
+        var event = json.readTree(payload);
+        assertThat(event.path("producer").asString("")).isEqualTo("order-service");
+        assertThat(event.path("data").path("orderId").asString("")).isEqualTo(order.id().toString());
+        assertThat(event.path("data").path("items")).hasSize(2);
+        assertThat(event.path("data").path("totalAmount").decimalValue()).isEqualByComparingTo("120.50");
+    }
+
+    @Test
+    void paymentSuccessEventConfirmsTheOrderWithoutThePollingJob() {
+        var order = placeOrder("k1").order();
+        payment.status = "CAPTURED";
+        var eventId = UUID.randomUUID();
+
+        var result = onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(paymentEvent(eventId, "PAYMENT_SUCCESS", order.id())));
+
+        assertThat(result.outcome()).isEqualTo(HandlePaymentEventUsecase.Outcome.SETTLED);
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.CONFIRMED);
+        assertThat(orders.isEventProcessed(eventId)).isTrue();
+    }
+
+    @Test
+    void paymentFailedEventFailsTheOrderAndReleasesStock() {
+        var order = placeOrder("k1").order();
+        payment.status = "FAILED";
+
+        onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(paymentEvent(UUID.randomUUID(), "PAYMENT_FAILED", order.id())));
+
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.FAILED);
+        assertThat(inventory.released).hasSize(2);
+    }
+
+    @Test
+    void aRedeliveredPaymentEventIsSkipped() {
+        var order = placeOrder("k1").order();
+        payment.status = "CAPTURED";
+        var event = paymentEvent(UUID.randomUUID(), "PAYMENT_SUCCESS", order.id());
+        onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(event));
+        inventory.deducted.clear();
+
+        var again = onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(event));
+
+        assertThat(again.outcome()).isEqualTo(HandlePaymentEventUsecase.Outcome.DUPLICATE);
+        assertThat(inventory.deducted).isEmpty();
+    }
+
+    @Test
+    void eventsThatAreNotPaymentResultsOrBelongToNoOrderAreIgnored() {
+        assertThat(onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(
+                paymentEvent(UUID.randomUUID(), "REFUND_COMPLETED", UUID.randomUUID()))).outcome())
+                .isEqualTo(HandlePaymentEventUsecase.Outcome.IGNORED);
+        assertThat(onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(
+                paymentEvent(UUID.randomUUID(), "PAYMENT_SUCCESS", UUID.randomUUID()))).outcome())
+                .isEqualTo(HandlePaymentEventUsecase.Outcome.ORDER_UNKNOWN);
+    }
+
+    @Test
+    void aMalformedPaymentEventIsRejectedSoItCanBeDeadLettered() {
+        assertThatThrownBy(() -> onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(
+                "{\"eventType\":\"PAYMENT_SUCCESS\",\"eventId\":\"nope\",\"data\":{}}")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void relayPublishesPendingEventsKeyedByOrderIdAndMarksThemSent() {
+        var order = placeOnly("k1").order();
+        var sent = new ArrayList<String>();
+
+        assertThat(relay((key, type, body) -> sent.add(key + "|" + type)).runOnce()).isEqualTo(1);
+
+        assertThat(sent).containsExactly(order.id() + "|ORDER_CREATED");
+        assertThat(jdbc.queryForObject("SELECT status FROM order_outbox", String.class)).isEqualTo("SENT");
+    }
+
+    @Test
+    void relayKeepsTheEventPendingWhileTheBrokerIsDown() {
+        placeOnly("k1");
+
+        assertThat(relay((key, type, body) -> {
+            throw new IllegalStateException("broker down");
+        }).runOnce()).isZero();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM order_outbox", String.class)).isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("SELECT attempts FROM order_outbox", Integer.class)).isEqualTo(1);
+    }
+
+    String paymentEvent(UUID eventId, String type, UUID orderId) {
+        return "{\"eventId\":\"" + eventId + "\",\"eventType\":\"" + type + "\",\"data\":{\"orderId\":\"" + orderId + "\",\"paymentIntentId\":\"" + payment.intentId + "\"}}";
+    }
+
+    @Autowired
+    OrderOutboxRepository outboxRepository;
+    @Autowired
+    PlatformTransactionManager txManager;
+
+    OrderOutboxPoller relay(EventPublisher publisher) {
+        return new OrderOutboxPoller(outboxRepository, publisher, new TransactionTemplate(txManager), clock, 100);
     }
 
     List<String> outboxTypes() {

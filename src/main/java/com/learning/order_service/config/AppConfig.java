@@ -21,6 +21,24 @@ import com.learning.order_service.gateway.PaymentGateway;
 import com.learning.order_service.gateway.client.CartGatewayImpl;
 import com.learning.order_service.gateway.client.InventoryGatewayImpl;
 import com.learning.order_service.gateway.client.PaymentGatewayImpl;
+import com.learning.order_service.core.usecase.HandleInventoryEventUsecase;
+import com.learning.order_service.core.usecase.HandlePaymentEventUsecase;
+import com.learning.order_service.gateway.InboxEventRepository;
+import com.learning.order_service.gateway.OrderOutboxPoller;
+import com.learning.order_service.gateway.messaging.EventPublisher;
+import com.learning.order_service.gateway.messaging.KafkaEventPublisher;
+import com.learning.order_service.gateway.messaging.LoggingEventPublisher;
+import com.learning.order_service.gateway.messaging.InventoryEventListener;
+import com.learning.order_service.gateway.messaging.PaymentEventListener;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaAdmin;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,6 +53,7 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
+import java.util.List;
 import java.time.Duration;
 
 /**
@@ -51,9 +70,8 @@ public class AppConfig {
 
     @Bean
     public PlaceOrderUsecase placeOrderUsecase(OrderGateway orders, CartGateway carts, InventoryGateway inventory,
-                                               PaymentGateway payments, OrderLifecycleService lifecycle,
-                                               OrderProperties properties, Clock clock) {
-        return new PlaceOrderUsecase(orders, carts, inventory, payments, lifecycle, properties, clock);
+                                               PaymentGateway payments, OrderProperties properties, Clock clock) {
+        return new PlaceOrderUsecase(orders, carts, inventory, payments, properties, clock);
     }
 
     @Bean
@@ -82,6 +100,19 @@ public class AppConfig {
         return new SettleOpenOrdersUsecase(orders, lifecycle, properties, clock);
     }
 
+    @Bean
+    public HandlePaymentEventUsecase handlePaymentEventUsecase(OrderGateway orders, OrderLifecycleService lifecycle,
+                                                               JsonMapper json, Clock clock) {
+        return new HandlePaymentEventUsecase(orders, lifecycle, json, clock);
+    }
+
+    @Bean
+    public HandleInventoryEventUsecase handleInventoryEventUsecase(OrderGateway orders, InventoryGateway inventory,
+                                                                   OrderLifecycleService lifecycle, JsonMapper json,
+                                                                   Clock clock) {
+        return new HandleInventoryEventUsecase(orders, inventory, lifecycle, json, clock);
+    }
+
     // =========================================================================
     // Services
     // =========================================================================
@@ -100,9 +131,10 @@ public class AppConfig {
     @Bean
     public OrderGateway orderGateway(OrderRepository orders, OrderItemRepository items,
                                      OrderStatusHistoryRepository history, SagaStateRepository sagas,
-                                     OrderOutboxRepository outbox, PlatformTransactionManager transactionManager,
-                                     JsonMapper json) {
-        return new JpaOrderGateway(orders, items, history, sagas, outbox, new TransactionTemplate(transactionManager), json);
+                                     OrderOutboxRepository outbox, InboxEventRepository inbox,
+                                     PlatformTransactionManager transactionManager, JsonMapper json) {
+        return new JpaOrderGateway(orders, items, history, sagas, outbox, inbox,
+                new TransactionTemplate(transactionManager), json);
     }
 
     @Bean
@@ -124,6 +156,81 @@ public class AppConfig {
     @ConditionalOnProperty(name = "order.jobs.enabled", havingValue = "true", matchIfMissing = true)
     public OrderSettlementJob orderSettlementJob(SettleOpenOrdersUsecase usecase) {
         return new OrderSettlementJob(usecase);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "order.jobs.enabled", havingValue = "true", matchIfMissing = true)
+    public OrderOutboxPoller orderOutboxPoller(OrderOutboxRepository outbox, EventPublisher publisher,
+                                               PlatformTransactionManager transactionManager, Clock clock,
+                                               @Value("${order.outbox.batch-size:100}") int batchSize) {
+        return new OrderOutboxPoller(outbox, publisher, new TransactionTemplate(transactionManager), clock, batchSize);
+    }
+
+    // =========================================================================
+    // Events
+    // =========================================================================
+
+    /** {@code order.events.publisher=kafka} sends to the broker; the default only logs. */
+    @Bean
+    @ConditionalOnProperty(name = "order.events.publisher", havingValue = "kafka")
+    public EventPublisher kafkaEventPublisher(KafkaTemplate<String, String> kafkaTemplate,
+                                              @Value("${order.events.topic:domain.order.events}") String topic) {
+        return new KafkaEventPublisher(kafkaTemplate, topic);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "order.events.publisher", havingValue = "log", matchIfMissing = true)
+    public EventPublisher loggingEventPublisher() {
+        return new LoggingEventPublisher();
+    }
+
+    /** Off by default, so the service runs without a broker (the settlement job still settles by polling). */
+    @Bean
+    @ConditionalOnProperty(name = "order.events.consumer-enabled", havingValue = "true")
+    public PaymentEventListener paymentEventListener(HandlePaymentEventUsecase usecase) {
+        return new PaymentEventListener(usecase);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "order.events.consumer-enabled", havingValue = "true")
+    public InventoryEventListener inventoryEventListener(HandleInventoryEventUsecase usecase) {
+        return new InventoryEventListener(usecase);
+    }
+
+    /**
+     * Creates the topics this service owns at startup, with explicit small partition counts so the cluster quota holds
+     * (free tier: 10 topics, 64 partitions in total). Replication is left to the broker default.
+     * Owns {@code domain.order.events} plus the dead-letter topics of the two it consumes.
+     */
+    @Bean
+    @ConditionalOnExpression("('${order.events.publisher:log}' == 'kafka' or '${order.events.consumer-enabled:false}' == 'true')"
+            + " and '${order.events.create-topics:true}' == 'true'")
+    public KafkaAdmin.NewTopics orderEventTopics(
+            @Value("${order.events.topic:domain.order.events}") String orderTopic,
+            @Value("${order.events.payment-topic:domain.payment.events}") String paymentTopic,
+            @Value("${order.events.inventory-topic:domain.inventory.events}") String inventoryTopic,
+            @Value("${order.events.partitions:3}") int partitions) {
+        return new KafkaAdmin.NewTopics(ownedTopics(orderTopic, paymentTopic, inventoryTopic, partitions)
+                .toArray(NewTopic[]::new));
+    }
+
+    static List<NewTopic> ownedTopics(String orderTopic, String paymentTopic, String inventoryTopic, int partitions) {
+        return List.of(
+                TopicBuilder.name(orderTopic).partitions(partitions).build(),
+                TopicBuilder.name(paymentTopic + ".dlq").partitions(1).build(),
+                TopicBuilder.name(inventoryTopic + ".dlq").partitions(1).build());
+    }
+
+    /** Retries 50ms, 250ms, 1.25s (TDD §13.7), then parks the event on {@code <topic>.dlq} and moves on. */
+    @Bean
+    @ConditionalOnProperty(name = "order.events.consumer-enabled", havingValue = "true")
+    public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, String> kafkaTemplate) {
+        var backOff = new ExponentialBackOffWithMaxRetries(3);
+        backOff.setInitialInterval(50);
+        backOff.setMultiplier(5);
+        var recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate,
+                (record, e) -> new TopicPartition(record.topic() + ".dlq", -1));
+        return new DefaultErrorHandler(recoverer, backOff);
     }
 
     // =========================================================================

@@ -20,6 +20,7 @@ public record Order(
         Address shippingAddress,
         Address billingAddress,
         UUID paymentIntentId,
+        String paymentProvider,
         String idempotencyKey,
         Instant placedAt,
         Instant confirmedAt,
@@ -30,7 +31,7 @@ public record Order(
 
     public Order withItems(List<OrderItem> newItems) {
         return new Order(id, orderNumber, customerId, status, currency, subtotal, discount, shippingFee, tax, total,
-                shippingAddress, billingAddress, paymentIntentId, idempotencyKey, placedAt, confirmedAt, cancelledAt,
+                shippingAddress, billingAddress, paymentIntentId, paymentProvider, idempotencyKey, placedAt, confirmedAt, cancelledAt,
                 cancelReason, newItems);
     }
 }

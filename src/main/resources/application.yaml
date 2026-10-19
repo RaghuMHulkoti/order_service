@@ -1,6 +1,23 @@
 spring:
   application:
     name: order-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:production-fgivv4.eu.cluster.ntail.io:9092}
+    # Cloud cluster login. Only the password is a secret: set KAFKA_PASSWORD in the environment, never in this file.
+    # For a local plaintext broker set KAFKA_SECURITY_PROTOCOL=PLAINTEXT and KAFKA_BOOTSTRAP_SERVERS=localhost:9092.
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME:default}" password="${KAFKA_PASSWORD:}";
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 3000
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
   datasource:
     url: jdbc:oracle:thin:@ecommerce_tp?TNS_ADMIN=${WALLET_DIR:/Users/raghavendra/Downloads/Wallet_ECOMMERCE}
     username: ${DB_USERNAME:ADMIN}
@@ -38,9 +55,24 @@ order:
   payment-timeout: 15m
   # Inventory holds stock this long. Must stay above payment-timeout so a late capture can still be deducted.
   reservation-ttl: 30m
+  events:
+    # log = print events (no broker needed); kafka = publish the outbox to the topic below
+    publisher: ${EVENTS_PUBLISHER:log}
+    topic: domain.order.events
+    # true = settle orders as soon as Payment's PAYMENT_SUCCESS / PAYMENT_FAILED arrives
+    consumer-enabled: ${EVENTS_CONSUMER_ENABLED:false}
+    # Topics are created at startup with these partition counts (free cluster quota: 10 topics, 64 partitions)
+    create-topics: ${EVENTS_CREATE_TOPICS:true}
+    partitions: 3
+    payment-topic: domain.payment.events
+    inventory-topic: domain.inventory.events
+  outbox:
+    poll-interval: 1s
+    batch-size: 100
   jobs:
     enabled: true
-    settle-interval: 30s
+    # With the payment consumer on, polling is only a safety net and the payment timeout; set ORDER_SETTLE_INTERVAL=5m.
+    settle-interval: ${ORDER_SETTLE_INTERVAL:30s}
 
 # Downstream services (TDD §12.6: Order -> Cart, Inventory reserve/deduct/release, Payment intents/refunds)
 cart-service:
@@ -73,7 +105,7 @@ management:
       export:
         enabled: true
         # Pushes the same Micrometer metrics the Prometheus endpoint serves, so Grafana Cloud needs no scraper.
-        # Auth: set MANAGEMENT_OTLP_METRICS_EXPORT_HEADERS_AUTHORIZATION="Basic <base64 instanceId:token>".
+        # Auth headers come from OTEL_EXPORTER_OTLP_HEADERS; only active while OTEL_METRICS_EXPORTER=otlp.
         url: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/metrics
         step: 30s
         base-time-unit: seconds
