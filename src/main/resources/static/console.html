@@ -108,6 +108,75 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
 @media (prefers-reduced-motion: no-preference) { .chip.live { animation: pulse 1.6s ease-in-out infinite; } }
 @keyframes pulse { 50% { opacity: 0.55; } }
+
+/* ===== iOS-style motion and surfaces (shared look of the order console and the supplier portal) ===== */
+:root { --ease: cubic-bezier(0.32, 0.72, 0, 1); --spring: cubic-bezier(0.34, 1.56, 0.64, 1); --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 10px 28px rgba(0,0,0,0.06); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.35); } }
+:root[data-theme="dark"] { --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.35); }
+html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif; -webkit-font-smoothing: antialiased; transition: background-color .4s var(--ease), color .4s var(--ease); }
+.panel { border-radius: 18px; box-shadow: var(--shadow); transition: background-color .4s var(--ease), border-color .4s var(--ease), box-shadow .4s var(--ease), transform .5s var(--ease); }
+input, select, textarea { border-radius: 10px; transition: border-color .2s var(--ease), box-shadow .25s var(--ease), background-color .3s var(--ease); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+button { border-radius: 12px; transition: transform .35s var(--spring), background-color .25s var(--ease), box-shadow .3s var(--ease), opacity .25s var(--ease), border-color .25s var(--ease); }
+button:hover:not(:disabled) { box-shadow: 0 4px 14px rgba(0,0,0,0.12); transform: translateY(-1px); }
+button:active:not(:disabled) { transform: scale(0.96); transition-duration: .12s; box-shadow: none; }
+.chip { transition: background-color .35s var(--ease), color .35s var(--ease); }
+
+/* sticky frosted bar with a large title that condenses on scroll, like a navigation bar */
+header { position: sticky; top: 8px; z-index: 20; padding: 12px 18px; border-radius: 20px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent); -webkit-backdrop-filter: saturate(180%) blur(22px); backdrop-filter: saturate(180%) blur(22px);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); box-shadow: var(--shadow); align-items: center; transition: padding .45s var(--ease), box-shadow .45s var(--ease); }
+header > div:first-child { flex: 1 1 420px; min-width: 0; }
+header > .row, header > div.row { flex: 0 0 auto; }
+header h1 { font-size: 28px; font-weight: 750; transition: font-size .45s var(--ease); }
+header .role { margin: 2px 0 0; color: var(--muted); max-height: 64px; overflow: hidden; transition: max-height .45s var(--ease), opacity .3s var(--ease), margin .45s var(--ease); }
+header .role b { color: var(--accent); font-weight: 650; }
+header.condensed { padding-block: 8px; }
+header.condensed h1 { font-size: 17px; }
+header.condensed .role { max-height: 0; opacity: 0; margin: 0; }
+
+/* entrance: sections rise in one after another; new rows, cards and log lines settle in */
+@keyframes rise { from { opacity: 0; transform: translateY(22px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes settle { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes flash { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
+.wrap > * { animation: rise .75s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms); }
+header { animation-name: rise; }
+.card, .item, .timeline li, .log > div { animation: settle .5s var(--ease) both; }
+#tItems .item, #flow .node { animation: none; }
+.flash { animation: flash .45s var(--ease); }
+.skeleton { border-radius: 14px; min-height: 150px; background: linear-gradient(100deg, var(--code-bg, var(--soft)) 30%, color-mix(in srgb, var(--panel) 80%, var(--line)) 50%, var(--code-bg, var(--soft)) 70%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+.card { border-radius: 16px; transition: transform .5s var(--ease), box-shadow .4s var(--ease); }
+.card:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+.item { border-radius: 14px; transition: background-color .3s var(--ease), border-color .3s var(--ease); }
+
+/* progress and state changes animate instead of jumping */
+.steps li, .flow .node { border-radius: 12px; transition: background-color .5s var(--ease), border-color .5s var(--ease), color .5s var(--ease), transform .5s var(--spring); }
+.steps li.done, .flow .node.ok { transform: scale(1.02); }
+.steps li.current { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); }
+fieldset.fs { transition: opacity .5s var(--ease), filter .5s var(--ease); }
+fieldset.fs:disabled { filter: saturate(0.4); }
+.lock { animation: flash .45s var(--ease); }
+details > *:not(summary) { animation: settle .4s var(--ease); }
+
+/* phones: one column, comfortable touch targets, the bar stays compact */
+@media (max-width: 640px) {
+  body { padding-inline: 12px; }
+  header { top: 6px; padding: 10px 14px; border-radius: 18px; }
+  header h1 { font-size: 24px; }
+  header.condensed h1 { font-size: 16px; }
+  .panel { padding: 14px; border-radius: 16px; }
+  button { min-height: 44px; }
+  input, select, textarea { min-height: 44px; font-size: 16px; }
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .row { gap: 8px; }
+  .item { padding: 10px 12px; }
+  .log { max-height: 220px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
@@ -115,7 +184,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
   <header>
     <div>
       <h1>Order Test Console</h1>
-      <p>Cart, order, payment and the events between them, one customer at a time.</p>
+      <p class="role"><b>Responsibility:</b> take a customer from cart to a confirmed, paid order: browse, check out, pay, and watch every step as it happens.</p>
     </div>
     <div class="row">
       <a href="https://supplier-service-tha0.onrender.com/supplier.html">Supplier portal</a>
@@ -149,7 +218,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
     <div class="stack">
       <section class="panel" aria-labelledby="h-cat">
         <h2 id="h-cat">1. Catalogue</h2>
-        <div id="catalogue" class="grid"><span class="muted">Loading products…</span></div>
+        <div id="catalogue" class="grid" aria-busy="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
       </section>
 
       <section class="panel" aria-labelledby="h-cart">
@@ -464,8 +533,9 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
       ["Awaiting payment", o.status === "CONFIRMED" ? "done" : o.status === "PAYMENT_PENDING" ? "current" : ""],
       [o.status === "CANCELLED" ? "Cancelled" : o.status === "FAILED" ? "Failed" : "Confirmed", o.status === "CONFIRMED" ? "done" : (o.status === "CANCELLED" || o.status === "FAILED") ? "failed" : ""]
     ];
-    const stepBox = $("steps"); stepBox.textContent = "";
-    stepList.forEach(([label, state]) => stepBox.append(el("li", { class: state, text: label })));
+    const stepBox = $("steps");
+    if (stepBox.children.length !== stepList.length) { stepBox.textContent = ""; stepList.forEach(() => stepBox.append(el("li"))); }
+    stepList.forEach(([label, state], i) => { const li = stepBox.children[i]; li.className = state; if (li.textContent !== label) li.textContent = label; });
     const left = new Date(o.placedAt).getTime() + 15 * 60 * 1000 - Date.now();
     $("tExpiry").textContent = o.status === "PAYMENT_PENDING"
       ? (left > 0 ? "Pay within about " + Math.ceil(left / 60000) + " min, or the order is cancelled." : "The payment window is closing; the order may be cancelled at any moment.") : "";
@@ -568,6 +638,25 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
 
   drawTokens();
   checkConnectivity().then(() => { loadCatalogue(); loadCart(); loadOrders(); });
+})();
+</script>
+
+<script>
+/* motion helpers: staggered reveal, condensing title bar, and a soft flash when a status message changes */
+(function () {
+  "use strict";
+  var wrap = document.querySelector(".wrap");
+  if (wrap) Array.prototype.forEach.call(wrap.children, function (child, i) { child.style.setProperty("--i", i); });
+  var bar = document.querySelector("header");
+  function onScroll() { if (bar) bar.classList.toggle("condensed", window.scrollY > 24); }
+  window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+  new MutationObserver(function (changes) {
+    changes.forEach(function (c) {
+      var node = c.target.nodeType === 3 ? c.target.parentElement : c.target;
+      var msg = node && node.closest && node.closest("[role=status], .msg");
+      if (msg && msg.textContent) { msg.classList.remove("flash"); void msg.offsetWidth; msg.classList.add("flash"); }
+    });
+  }).observe(document.body, { childList: true, characterData: true, subtree: true });
 })();
 </script>
 </body>
