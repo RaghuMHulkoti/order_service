@@ -43,6 +43,9 @@ public interface OrderGateway {
 
     void setPaymentIntent(UUID orderId, UUID paymentIntentId);
 
+    /** A retry after a failed payment: points the order at its new intent and counts the attempt. */
+    void startPaymentAttempt(UUID orderId, UUID paymentIntentId);
+
     /** Consumer-side dedupe (TDD §13.6): true once {@link #markEventProcessed} recorded this event id. */
     boolean isEventProcessed(UUID eventId);
 

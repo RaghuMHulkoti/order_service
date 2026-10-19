@@ -173,7 +173,7 @@ class DownstreamContractTest {
                         {"status":"SUCCESS","body":{"paymentId":"%s","orderId":"%s","status":"REQUIRES_ACTION",
                          "clientSecret":"pi_sim_x_secret_sim"}}""".formatted(intent, order), MediaType.APPLICATION_JSON));
 
-        var payment = new PaymentGatewayImpl(client).createIntent(order, customer, new BigDecimal("120.50"), "INR", null);
+        var payment = new PaymentGatewayImpl(client).createIntent(order, customer, new BigDecimal("120.50"), "INR", null, 1);
 
         assertThat(payment.paymentId()).isEqualTo(intent);
         assertThat(payment.clientSecret()).isEqualTo("pi_sim_x_secret_sim");

@@ -2,6 +2,9 @@ package com.learning.order_service.core.usecase;
 
 import com.learning.order_service.core.domain.Order;
 import com.learning.order_service.core.domain.OrderStatus;
+import com.learning.order_service.core.domain.Tracing;
+import com.learning.order_service.gateway.PaymentGateway;
+import tools.jackson.databind.JsonNode;
 import com.learning.order_service.core.service.lifecycle.OrderLifecycleService;
 import com.learning.order_service.core.service.lifecycle.OrderLifecycleServiceRequest;
 import com.learning.order_service.gateway.OrderGateway;
@@ -37,11 +40,14 @@ public class HandlePaymentEventUsecase
 
     private final OrderGateway orders;
     private final OrderLifecycleService lifecycle;
+    private final PaymentGateway payments;
     private final JsonMapper json;
     private final Clock clock;
 
-    public HandlePaymentEventUsecase(OrderGateway orders, OrderLifecycleService lifecycle, JsonMapper json, Clock clock) {
+    public HandlePaymentEventUsecase(OrderGateway orders, OrderLifecycleService lifecycle, PaymentGateway payments,
+                                     JsonMapper json, Clock clock) {
         this.orders = orders;
+        this.payments = payments;
         this.lifecycle = lifecycle;
         this.json = json;
         this.clock = clock;
@@ -51,6 +57,12 @@ public class HandlePaymentEventUsecase
     @Override
     public Response execute(Request request) {
         var root = json.readTree(request.payload());
+        try (var ignored = Tracing.continueTrace(root.path("traceId").asString(""))) {
+            return handle(root);
+        }
+    }
+
+    private Response handle(JsonNode root) {
         if (!HANDLED.contains(root.path("eventType").asString(""))) {
             return new Response(Outcome.IGNORED);
         }
@@ -75,11 +87,18 @@ public class HandlePaymentEventUsecase
                         .operation(OrderLifecycleServiceRequest.Operation.ABORT).order(order).target(OrderStatus.FAILED)
                         .reason(data.path("failureCode").asString("PAYMENT_INIT_FAILED")).actor("payment").build());
             }
+        } else if (type.equals("PAYMENT_SUCCESS") && endedUnpaid(order)) {
+            // The customer paid an order that was cancelled or timed out meanwhile: give the money back
+            payments.refund(orderId, "ORDER_ENDED");
         } else {
             lifecycle.execute(OrderLifecycleServiceRequest.builder()
                     .operation(OrderLifecycleServiceRequest.Operation.SETTLE).order(order).build());
         }
         orders.markEventProcessed(eventId, CONSUMER, clock.instant());
         return new Response(Outcome.SETTLED);
+    }
+
+    private static boolean endedUnpaid(Order order) {
+        return order.status() == OrderStatus.CANCELLED || order.status() == OrderStatus.FAILED;
     }
 }

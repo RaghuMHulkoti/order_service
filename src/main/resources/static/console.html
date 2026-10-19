@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Order Test Console</title>
+<style>
+/* Layout: a two-column workbench. Left: the customer's steps. Right: what the system does in response. */
+:root {
+  --bg: #f3f5f4;
+  --panel: #ffffff;
+  --ink: #17211f;
+  --muted: #5b6a66;
+  --line: #d5dcda;
+  --accent: #0d6b5f;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcefeb;
+  --ok: #17683a;
+  --ok-soft: #dcf1e3;
+  --warn: #8a5a00;
+  --warn-soft: #fbecc8;
+  --bad: #a3271f;
+  --bad-soft: #f8dcd9;
+  --code-bg: #eaeeed;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1514; --panel: #172120; --ink: #e5eeec; --muted: #92a39f; --line: #2b3a37;
+    --accent: #3fb8a5; --accent-ink: #06201c; --accent-soft: #1b3a35;
+    --ok: #6fd391; --ok-soft: #173b27; --warn: #f0c46a; --warn-soft: #3b2f10;
+    --bad: #f19489; --bad-soft: #442020; --code-bg: #101918; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1514; --panel: #172120; --ink: #e5eeec; --muted: #92a39f; --line: #2b3a37;
+  --accent: #3fb8a5; --accent-ink: #06201c; --accent-soft: #1b3a35;
+  --ok: #6fd391; --ok-soft: #173b27; --warn: #f0c46a; --warn-soft: #3b2f10;
+  --bad: #f19489; --bad-soft: #442020; --code-bg: #101918; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.45;
+  padding-inline: 16px; padding-block: 16px 40px; margin: 0; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; font-weight: 650; }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+header p { margin: 0; color: var(--muted); }
+.banner { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: 6px; padding: 10px 12px; }
+.banner a { color: inherit; font-weight: 650; overflow-wrap: anywhere; }
+.cols { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.stack { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.grid2 { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; min-width: 0; width: 100%; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px; padding: 7px 12px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.mono { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.list { display: grid; gap: 6px; }
+.item { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 6px; }
+.item > div { min-width: 0; }
+.chip { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px;
+  background: var(--code-bg); color: var(--muted); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip.live { background: var(--accent-soft); color: var(--accent); }
+.tokens { display: grid; gap: 6px; }
+.token { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.token input { width: auto; margin-top: 2px; }
+.token small { display: block; color: var(--muted); }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.timeline li { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.timeline li:last-child { border-bottom: 0; }
+.timeline time { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.log { background: var(--code-bg); border-radius: 6px; padding: 8px; max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12px; }
+.log div { padding: 3px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.log details summary { cursor: pointer; }
+.log pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-big { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.status-big strong { font-size: 18px; }
+.note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.sr { position: absolute; left: -9999px; }
+@media (prefers-reduced-motion: no-preference) { .chip.live { animation: pulse 1.6s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: 0.55; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Order Test Console</h1>
+      <p>Cart, order, payment and the events between them, one customer at a time.</p>
+    </div>
+    <div class="row">
+      <span id="conn" class="chip">checking services</span>
+      <button id="theme" type="button" aria-label="Switch colour theme">Theme</button>
+    </div>
+  </header>
+
+  <div id="blocked" class="banner" hidden>
+    This page cannot reach the services from here (the claude.ai preview blocks outside requests, or CORS is not enabled yet).
+    Open the working console at <a id="liveLink" href="#" target="_blank" rel="noopener"></a>
+    and set <span class="mono">CORS_ALLOWED_ORIGINS</span> on the order, cart and product services to that address.
+  </div>
+
+  <section class="panel" aria-labelledby="h-conn">
+    <h2 id="h-conn">Connection</h2>
+    <div class="grid2">
+      <label>Order service <input id="orderUrl" autocomplete="off"></label>
+      <label>Cart service <input id="cartUrl" autocomplete="off"></label>
+      <label>Product service <input id="productUrl" autocomplete="off"></label>
+      <label>Customer id <input id="userId" autocomplete="off"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="newUser" type="button">New customer</button>
+      <button id="reload" type="button">Reload catalogue and cart</button>
+    </div>
+  </section>
+
+  <div class="cols">
+    <div class="stack">
+      <section class="panel" aria-labelledby="h-cat">
+        <h2 id="h-cat">1. Catalogue</h2>
+        <div id="catalogue" class="list"><span class="muted">Loading products…</span></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-cart">
+        <h2 id="h-cart">2. Cart</h2>
+        <div id="cart" class="list"><span class="muted">Empty. Add a product above.</span></div>
+        <p id="cartTotal" class="note"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-place">
+        <h2 id="h-place">3. Place order</h2>
+        <div class="grid2">
+          <label>Name <input id="aName" value="Test Customer"></label>
+          <label>Address <input id="aLine" value="1 MG Road"></label>
+          <label>City <input id="aCity" value="Bengaluru"></label>
+          <label>Postal code <input id="aZip" value="560001"></label>
+          <label>Payment provider
+            <select id="provider"><option>STRIPE</option><option>RAZORPAY</option></select>
+          </label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="place" class="primary" type="button">Place order</button>
+          <button id="replay" type="button" disabled>Send same request again</button>
+        </div>
+        <p class="note">Sending the same request again reuses its idempotency key: no second order is created, and once the order is waiting for payment the answer carries the client secret.</p>
+        <p id="placeMsg" class="note" role="status"></p>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="panel" aria-labelledby="h-track">
+        <h2 id="h-track">Order status</h2>
+        <div id="trackEmpty" class="muted">No order yet. Place one and its progress shows here.</div>
+        <div id="track" hidden>
+          <div class="status-big">
+            <strong id="tNumber"></strong>
+            <span id="tStatus" class="chip"></span>
+            <span id="tLive" class="chip live" hidden>updating</span>
+          </div>
+          <p class="note"><span id="tAmount"></span> · payment attempt <span id="tAttempt">1</span> · <span id="tElapsed"></span></p>
+          <div id="tItems" class="list" style="margin-top:8px"></div>
+          <h2 style="margin-top:14px">What happened</h2>
+          <ol id="timeline" class="timeline"></ol>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-pay">
+        <h2 id="h-pay">4. Pay</h2>
+        <div id="tokens" class="tokens"></div>
+        <label style="margin-top:8px">Or a custom payment method / token <input id="customToken" placeholder="pm_card_visa" autocomplete="off"></label>
+        <div class="row" style="margin-top:10px">
+          <button id="pay" class="primary" type="button" disabled>Pay order</button>
+          <button id="cancel" class="danger" type="button" disabled>Cancel order</button>
+        </div>
+        <div id="payResult" class="note" role="status"></div>
+        <p class="note">A declined payment keeps the order open. Pay again with another method: each try opens a new payment, up to three.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-orders">
+        <h2 id="h-orders">Your orders</h2>
+        <div class="row"><button id="refreshOrders" type="button">Refresh</button></div>
+        <div id="orders" class="list" style="margin-top:8px"><span class="muted">None yet.</span></div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel" aria-labelledby="h-log">
+    <h2 id="h-log">Requests</h2>
+    <div class="row" style="margin-bottom:8px"><button id="clearLog" type="button">Clear</button></div>
+    <div id="log" class="log" aria-live="off"><div class="muted">Calls made by this page appear here.</div></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const DEFAULTS = {
+    order: location.protocol.startsWith("http") ? location.origin : "https://order-service-nf43.onrender.com",
+    cart: "https://cart-service-csoc.onrender.com",
+    product: "https://product-service-1o2l.onrender.com"
+  };
+  const TERMINAL = ["CONFIRMED", "FAILED", "CANCELLED"];
+  const TOKENS = [
+    { v: "pm_card_visa", t: "Stripe test: card succeeds", s: "Needs a Stripe test key on the payment service" },
+    { v: "pm_card_chargeDeclined", t: "Stripe test: card declined", s: "Order stays open, you can retry" },
+    { v: "pm_card_threeDSecure2Required", t: "Stripe test: needs customer action (3DS)", s: "Order keeps waiting" },
+    { v: "tok_ok", t: "Simulated: succeeds", s: "Works when the payment service has no Stripe key" },
+    { v: "tok_fail", t: "Simulated: declined", s: "Order stays open, you can retry" },
+    { v: "tok_3ds", t: "Simulated: needs customer action", s: "Order keeps waiting" }
+  ];
+
+  const store = {
+    get(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+  };
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); }));
+  const money = (n, cur) => (cur || "") + " " + Number(n).toLocaleString("en-IN");
+  const clock = () => new Date().toLocaleTimeString([], { hour12: false });
+
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v); }
+    kids.forEach((kid) => n.append(kid));
+    return n;
+  }
+  function statusClass(s) {
+    if (s === "CONFIRMED") return "ok";
+    if (s === "FAILED" || s === "CANCELLED") return "bad";
+    if (s === "PAYMENT_PENDING") return "warn";
+    return "";
+  }
+
+  // ----- state
+  let current = null, lastKey = null, lastBody = null, timer = null, placedAt = 0, seen = {}, selectedToken = TOKENS[0].v;
+
+  // ----- config
+  $("orderUrl").value = store.get("oc.order", DEFAULTS.order);
+  $("cartUrl").value = store.get("oc.cart", DEFAULTS.cart);
+  $("productUrl").value = store.get("oc.product", DEFAULTS.product);
+  $("userId").value = store.get("oc.user", uuid());
+  const base = (id) => $(id).value.trim().replace(/\/+$/, "");
+  ["orderUrl", "cartUrl", "productUrl", "userId"].forEach((id) => $(id).addEventListener("change", () => {
+    store.set({ orderUrl: "oc.order", cartUrl: "oc.cart", productUrl: "oc.product", userId: "oc.user" }[id], $(id).value.trim());
+  }));
+  store.set("oc.user", $("userId").value);
+  $("liveLink").href = DEFAULTS.order + "/console.html";
+  $("liveLink").textContent = DEFAULTS.order + "/console.html";
+
+  // ----- theme toggle
+  $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+
+  // ----- request log
+  function log(method, url, status, ms, payload) {
+    const box = $("log");
+    if (box.firstChild && box.firstChild.classList.contains("muted")) box.textContent = "";
+    const ok = status >= 200 && status < 300;
+    const sum = el("summary", { text: clock() + "  " + method + " " + url.replace(/^https?:\/\/[^/]+/, "") + "  → " + status + "  (" + ms + " ms)" });
+    sum.style.color = ok ? "var(--ok)" : "var(--bad)";
+    const pre = el("pre", { text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2) });
+    const d = el("details", {}, sum, pre);
+    box.prepend(el("div", {}, d));
+  }
+  $("clearLog").addEventListener("click", () => { $("log").textContent = ""; });
+
+  async function api(service, path, opts) {
+    const o = opts || {};
+    const url = base(service) + path;
+    const headers = Object.assign({ "X-User-Id": $("userId").value.trim() }, o.headers || {});
+    if (o.body) headers["Content-Type"] = "application/json";
+    const t0 = performance.now();
+    let res, text;
+    try {
+      res = await fetch(url, { method: o.method || "GET", headers, body: o.body ? JSON.stringify(o.body) : undefined });
+      text = await res.text();
+    } catch (e) {
+      log(o.method || "GET", url, 0, Math.round(performance.now() - t0), "Network error: " + e.message);
+      throw new Error("Cannot reach " + url.replace(/^https?:\/\//, "").split("/")[0]);
+    }
+    let json = null;
+    try { json = JSON.parse(text); } catch (e) { /* not json */ }
+    log(o.method || "GET", url, res.status, Math.round(performance.now() - t0), json || text);
+    if (!res.ok) {
+      const msg = (json && json.body && json.body.message) || (json && json.message) || res.statusText || "Request failed";
+      const err = new Error(msg); err.status = res.status; err.json = json; throw err;
+    }
+    return json;
+  }
+
+  // ----- connectivity
+  async function checkConnectivity() {
+    const names = [["order", "orderUrl"], ["cart", "cartUrl"], ["product", "productUrl"]];
+    let failed = 0;
+    await Promise.all(names.map(async ([, id]) => {
+      try { await fetch(base(id) + "/actuator/health", { mode: "cors" }); } catch (e) { failed++; }
+    }));
+    $("blocked").hidden = failed === 0;
+    $("conn").textContent = failed === 0 ? "services reachable" : failed + " of 3 unreachable";
+    $("conn").className = "chip " + (failed === 0 ? "ok" : "bad");
+  }
+
+  // ----- catalogue and cart
+  async function loadCatalogue() {
+    const box = $("catalogue");
+    try {
+      const data = await api("productUrl", "/api/v1/products?size=20");
+      const items = (data.body && data.body.items) || [];
+      box.textContent = "";
+      if (!items.length) { box.append(el("span", { class: "muted", text: "No products." })); return; }
+      items.forEach((p) => {
+        const qty = el("input", { type: "number", min: "1", value: "1", "aria-label": "Quantity for " + p.title });
+        qty.style.width = "64px";
+        const add = el("button", { type: "button", text: "Add" });
+        add.addEventListener("click", () => addToCart(p.id, Number(qty.value) || 1, add));
+        box.append(el("div", { class: "item" },
+          el("div", {}, el("strong", { text: p.title }), el("div", { class: "muted mono", text: p.sku })),
+          el("div", { class: "row" }, qty, add)));
+      });
+    } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Catalogue unavailable: " + e.message })); }
+  }
+
+  async function addToCart(productId, quantity, btn) {
+    btn.disabled = true;
+    try { await api("cartUrl", "/api/v1/cart/items", { method: "POST", body: { productId, quantity } }); await loadCart(); }
+    catch (e) { $("cartTotal").textContent = "Could not add: " + e.message; }
+    finally { btn.disabled = false; }
+  }
+
+  async function loadCart() {
+    const box = $("cart");
+    try {
+      const data = await api("cartUrl", "/api/v1/cart");
+      const cart = data.body;
+      box.textContent = "";
+      if (!cart.items || !cart.items.length) { box.append(el("span", { class: "muted", text: "Empty. Add a product above." })); $("cartTotal").textContent = ""; return; }
+      cart.items.forEach((i) => {
+        const rm = el("button", { type: "button", text: "Remove" });
+        rm.addEventListener("click", async () => { try { await api("cartUrl", "/api/v1/cart/items/" + i.itemId, { method: "DELETE" }); await loadCart(); } catch (e) { $("cartTotal").textContent = e.message; } });
+        box.append(el("div", { class: "item" },
+          el("div", {}, el("strong", { text: i.title }), el("div", { class: "muted", text: i.quantity + " × " + money(i.unitPrice, i.currency) + " · " + i.availability })),
+          rm));
+      });
+      $("cartTotal").textContent = "Subtotal " + money(cart.subtotal, cart.currency) + (cart.checkoutReady ? " · ready for checkout" : " · not ready: check item availability");
+    } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Cart unavailable: " + e.message })); }
+  }
+
+  // ----- place order
+  function orderBody() {
+    return {
+      shippingAddress: { name: $("aName").value, line1: $("aLine").value, city: $("aCity").value, state: "KA", postalCode: $("aZip").value, country: "IN" },
+      provider: $("provider").value
+    };
+  }
+  async function sendPlace(key, body) {
+    $("placeMsg").textContent = "Sending…";
+    try {
+      const data = await api("orderUrl", "/api/v1/orders", { method: "POST", body, headers: { "Idempotency-Key": key } });
+      const o = data.body;
+      const secret = o.nextAction && o.nextAction.clientSecret;
+      $("placeMsg").textContent = data.message + (secret ? ". Client secret received (" + secret.length + " characters)." : ". No client secret yet: send again in a moment.");
+      if (!current || current.orderId !== o.orderId) startTracking(o);
+      $("replay").disabled = false;
+    } catch (e) { $("placeMsg").textContent = "Order not placed: " + e.message; }
+  }
+  $("place").addEventListener("click", () => { lastKey = uuid(); lastBody = orderBody(); sendPlace(lastKey, lastBody); });
+  $("replay").addEventListener("click", () => { if (lastKey) sendPlace(lastKey, lastBody); });
+
+  // ----- tracking
+  function note(text) { const li = el("li", {}, el("time", { text: clock() }), el("span", { text })); $("timeline").prepend(li); }
+  function startTracking(o) {
+    clearInterval(timer);
+    current = { orderId: o.orderId };
+    seen = {}; placedAt = Date.now();
+    $("timeline").textContent = "";
+    $("trackEmpty").hidden = true; $("track").hidden = false;
+    note("Order placed, waiting for stock to be held");
+    render(o);
+    timer = setInterval(poll, 2000);
+    poll();
+  }
+  async function poll() {
+    if (!current) return;
+    try { const data = await api("orderUrl", "/api/v1/orders/" + current.orderId); render(data.body); } catch (e) { /* keep polling */ }
+  }
+  function render(o) {
+    current = { orderId: o.orderId, status: o.status };
+    $("tNumber").textContent = o.orderNumber;
+    $("tStatus").textContent = o.status.replace("_", " "); $("tStatus").className = "chip " + statusClass(o.status);
+    $("tAmount").textContent = money(o.amount.total, o.currency);
+    $("tAttempt").textContent = o.paymentAttempts || 1;
+    $("tElapsed").textContent = "placed " + Math.max(0, Math.round((Date.now() - placedAt) / 1000)) + "s ago";
+    const items = $("tItems"); items.textContent = "";
+    (o.items || []).forEach((i) => items.append(el("div", { class: "item" },
+      el("div", { text: i.quantity + " × " + i.title }), el("span", { class: "chip", text: i.fulfilmentStatus }))));
+    const reserved = (o.items || []).length && o.items.every((i) => i.fulfilmentStatus === "RESERVED");
+    if (reserved && !seen.reserved) { seen.reserved = true; note("Stock held by inventory"); }
+    if (o.status !== seen.status) { if (seen.status) note("Order is now " + o.status.replace("_", " ").toLowerCase() + (o.cancelReason ? " (" + o.cancelReason + ")" : "")); seen.status = o.status; }
+    if (o.paymentId && o.paymentId !== seen.payment) { note("Payment " + (seen.payment ? "retry" : "intent") + " opened " + o.paymentId.slice(0, 8)); seen.payment = o.paymentId; }
+    const done = TERMINAL.includes(o.status);
+    $("tLive").hidden = done;
+    $("pay").disabled = !(o.status === "PAYMENT_PENDING" && o.paymentId);
+    $("cancel").disabled = done;
+    if (done) { clearInterval(timer); loadOrders(); }
+  }
+
+  // ----- pay and cancel
+  function drawTokens() {
+    const box = $("tokens"); box.textContent = "";
+    TOKENS.forEach((t) => {
+      const r = el("input", { type: "radio", name: "tok", value: t.v });
+      if (t.v === selectedToken) r.checked = true;
+      r.addEventListener("change", () => { selectedToken = t.v; $("customToken").value = ""; });
+      box.append(el("label", { class: "token" }, r, el("span", {}, el("strong", { text: t.t }), el("small", { text: t.s }))));
+    });
+  }
+  $("pay").addEventListener("click", async () => {
+    if (!current) return;
+    const token = $("customToken").value.trim() || selectedToken;
+    $("pay").disabled = true; $("payResult").textContent = "Paying with " + token + "…";
+    try {
+      const data = await api("orderUrl", "/api/v1/orders/" + current.orderId + "/pay", { method: "POST", body: { paymentMethodToken: token } });
+      const b = data.body;
+      $("payResult").textContent = "Payment " + b.paymentStatus + (b.failureCode ? " (" + b.failureCode + ")" : "") + " · attempt " + b.attempt +
+        (b.canRetry ? ". The order is still open: pick another method and pay again." : "");
+      note("Payment attempt " + b.attempt + ": " + b.paymentStatus + (b.failureCode ? " " + b.failureCode : ""));
+      render(b.order); if (!TERMINAL.includes(b.order.status)) { clearInterval(timer); timer = setInterval(poll, 2000); }
+    } catch (e) { $("payResult").textContent = "Payment not processed: " + e.message; }
+    finally { if (current && current.status === "PAYMENT_PENDING") $("pay").disabled = false; }
+  });
+  $("cancel").addEventListener("click", async () => {
+    if (!current) return;
+    try { const data = await api("orderUrl", "/api/v1/orders/" + current.orderId + "/cancel", { method: "POST" }); render(data.body); $("payResult").textContent = "Order cancelled. Any open payment is closed through events."; }
+    catch (e) { $("payResult").textContent = "Not cancelled: " + e.message; }
+  });
+
+  // ----- order list
+  async function loadOrders() {
+    const box = $("orders");
+    try {
+      const data = await api("orderUrl", "/api/v1/orders?size=10");
+      const list = (data.body && data.body.orders) || [];
+      box.textContent = "";
+      if (!list.length) { box.append(el("span", { class: "muted", text: "None yet." })); return; }
+      list.forEach((o) => {
+        const open = el("button", { type: "button", text: "Open" });
+        open.addEventListener("click", async () => { const d = await api("orderUrl", "/api/v1/orders/" + o.orderId); startTracking(d.body); });
+        box.append(el("div", { class: "item" },
+          el("div", {}, el("strong", { text: o.orderNumber }), el("div", { class: "muted", text: money(o.amount.total, o.currency) })),
+          el("div", { class: "row" }, el("span", { class: "chip " + statusClass(o.status), text: o.status.replace("_", " ") }), open)));
+      });
+    } catch (e) { box.textContent = ""; box.append(el("span", { class: "muted", text: "Orders unavailable: " + e.message })); }
+  }
+  $("refreshOrders").addEventListener("click", loadOrders);
+  $("newUser").addEventListener("click", () => { $("userId").value = uuid(); store.set("oc.user", $("userId").value); clearInterval(timer); current = null; $("track").hidden = true; $("trackEmpty").hidden = false; loadCart(); loadOrders(); });
+  $("reload").addEventListener("click", () => { checkConnectivity(); loadCatalogue(); loadCart(); loadOrders(); });
+
+  drawTokens();
+  checkConnectivity().then(() => { loadCatalogue(); loadCart(); loadOrders(); });
+})();
+</script>
+</body>
+</html>

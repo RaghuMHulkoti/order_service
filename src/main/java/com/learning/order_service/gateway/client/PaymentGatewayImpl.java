@@ -21,10 +21,11 @@ public class PaymentGatewayImpl implements PaymentGateway {
     }
 
     @Override
-    public PaymentSnapshot createIntent(UUID orderId, UUID customerId, BigDecimal amount, String currency, String provider) {
+    public PaymentSnapshot createIntent(UUID orderId, UUID customerId, BigDecimal amount, String currency, String provider,
+                                        int attempt) {
         return call(() -> paymentRestClient.post()
                 .uri("/api/v1/internal/payments/intents")
-                .header(IDEMPOTENCY_HEADER, "order_" + orderId)
+                .header(IDEMPOTENCY_HEADER, attempt <= 1 ? "order_" + orderId : "order_" + orderId + "_a" + attempt)
                 .body(new IntentBody(orderId, customerId, amount, currency, provider))
                 .retrieve()
                 .body(new ParameterizedTypeReference<Envelope>() {}));

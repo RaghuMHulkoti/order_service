@@ -80,7 +80,7 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
             return new Response(order, null, true);
         }
         var payment = payments.createIntent(order.id(), order.customerId(), order.total(), order.currency(),
-                request.provider());
+                request.provider(), order.paymentAttempts());
         return new Response(order, payment.clientSecret(), true);
     }
 
@@ -99,7 +99,7 @@ public class PlaceOrderUsecase implements Usecase<PlaceOrderUsecase.Request, Pla
         // Discounts, shipping and tax are not modelled yet, so the total is the subtotal.
         return new Order(UUID.randomUUID(), orders.nextOrderNumber(now), request.customerId(), OrderStatus.CREATED,
                 cart.currency(), subtotal, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, subtotal,
-                request.shippingAddress(), request.billingAddress(), null, request.provider(), request.idempotencyKey(),
+                request.shippingAddress(), request.billingAddress(), null, request.provider(), 1, request.idempotencyKey(),
                 now, null, null, null, items);
     }
 

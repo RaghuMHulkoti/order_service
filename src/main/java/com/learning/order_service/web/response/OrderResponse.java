@@ -17,6 +17,7 @@ public record OrderResponse(
         Address shippingAddress,
         Address billingAddress,
         UUID paymentId,
+        int paymentAttempts,
         List<Item> items,
         Instant placedAt,
         Instant confirmedAt,

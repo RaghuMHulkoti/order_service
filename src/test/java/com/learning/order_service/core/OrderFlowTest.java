@@ -65,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.flyway.enabled=false",
         "spring.jpa.properties.hibernate.default_schema=PUBLIC",
         "spring.sql.init.mode=always",
-        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql,classpath:db/migration/V2__outbox_relay_and_inbox.sql,classpath:db/migration/V3__payment_provider.sql",
+        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql,classpath:db/migration/V2__outbox_relay_and_inbox.sql,classpath:db/migration/V3__payment_provider.sql,classpath:db/migration/V4__payment_attempts.sql",
         "order.jobs.enabled=false"
 })
 class OrderFlowTest {
@@ -102,14 +102,14 @@ class OrderFlowTest {
         for (var table : List.of("inbox_events", "order_outbox", "saga_state", "order_status_history", "order_items", "orders")) {
             jdbc.update("DELETE FROM " + table);
         }
-        var properties = new OrderProperties(Duration.ofMinutes(15), Duration.ofMinutes(30));
-        var lifecycle = new OrderLifecycleService(orders, inventory, payment, cart, json, clock);
+        var properties = new OrderProperties(Duration.ofMinutes(15), Duration.ofMinutes(30), 3);
+        var lifecycle = new OrderLifecycleService(orders, inventory, payment, cart, json, clock, properties);
         place = new PlaceOrderUsecase(orders, cart, inventory, payment, properties, clock);
-        pay = new PayOrderUsecase(orders, payment, lifecycle);
+        pay = new PayOrderUsecase(orders, payment, lifecycle, properties);
         cancel = new CancelOrderUsecase(orders, lifecycle);
         settle = new SettleOpenOrdersUsecase(orders, lifecycle, properties, clock);
         list = new ListOrdersUsecase(orders);
-        onPaymentEvent = new HandlePaymentEventUsecase(orders, lifecycle, json, clock);
+        onPaymentEvent = new HandlePaymentEventUsecase(orders, lifecycle, payment, json, clock);
         onInventoryEvent = new HandleInventoryEventUsecase(orders, inventory, lifecycle, json, clock);
 
         cart.lines.add(new CartSnapshot.Line(offerA, productA, UUID.randomUUID(), "Keyboard", 2, new BigDecimal("50.00")));
@@ -302,19 +302,99 @@ class OrderFlowTest {
     }
 
     @Test
-    void declinedPaymentFailsOrderAndReleasesStock() {
+    void declinedPaymentKeepsTheOrderWaitingSoTheCustomerCanRetry() {
         var order = placeOrder("k1").order();
         payment.confirmResult = new PaymentSnapshot(payment.intentId, "FAILED", null, "card_declined", "Your card was declined.");
 
         var result = pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_fail"));
 
-        assertThat(result.order().status()).isEqualTo(OrderStatus.FAILED);
-        assertThat(result.order().cancelReason()).isEqualTo("card_declined");
+        assertThat(result.order().status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(result.canRetry()).isTrue();
         assertThat(result.payment().failureCode()).isEqualTo("card_declined");
-        assertThat(inventory.released).hasSize(2);
+        assertThat(result.order().paymentAttempts()).isEqualTo(1);
+        assertThat(inventory.released).isEmpty();
         assertThat(inventory.deducted).isEmpty();
-        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED", "ORDER_FAILED");
         assertThat(cart.removed).isEmpty();
+    }
+
+    @Test
+    void retryAfterADeclineOpensANewIntentAndConfirmsTheOrder() {
+        var order = placeOrder("k1").order();
+        payment.confirmResult = new PaymentSnapshot(payment.intentId, "FAILED", null, "card_declined", "Your card was declined.");
+        pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_fail"));
+        payment.confirmResult = null; // the next card works
+
+        var retry = pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_ok"));
+
+        assertThat(retry.order().status()).isEqualTo(OrderStatus.CONFIRMED);
+        assertThat(retry.order().paymentAttempts()).isEqualTo(2);
+        assertThat(retry.order().paymentIntentId()).isEqualTo(payment.retryIntent);
+        assertThat(payment.attempts).containsExactly(2);
+        assertThat(inventory.deducted).hasSize(2);
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED", "ORDER_CONFIRMED");
+    }
+
+    @Test
+    void whenAttemptsRunOutTheOrderFailsAndTheStockIsReleased() {
+        var order = placeOrder("k1").order();
+        PayOrderUsecase.Response last = null;
+        for (int i = 1; i <= 3; i++) {
+            payment.confirmResult = new PaymentSnapshot(i == 1 ? payment.intentId : payment.retryIntent, "FAILED", null,
+                    "card_declined", "Your card was declined.");
+            last = pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_fail"));
+        }
+
+        assertThat(last.order().status()).isEqualTo(OrderStatus.FAILED);
+        assertThat(last.canRetry()).isFalse();
+        assertThat(last.order().cancelReason()).isEqualTo("card_declined");
+        assertThat(inventory.released).hasSize(2);
+        assertThat(outboxTypes()).containsExactly("ORDER_CREATED", "PAYMENT_REQUESTED", "ORDER_FAILED");
+        assertThatThrownBy(() -> pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_ok")))
+                .isInstanceOfSatisfying(BusinessRuleViolationException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("INVALID_ORDER_STATE"));
+    }
+
+    @Test
+    void aCancelledPaymentCannotBeRetried() {
+        var order = placeOrder("k1").order();
+        payment.status = "CANCELLED";
+
+        assertThatThrownBy(() -> pay.execute(new PayOrderUsecase.Request(customer, order.id(), "tok_ok")))
+                .isInstanceOfSatisfying(BusinessRuleViolationException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("PAYMENT_ATTEMPTS_EXHAUSTED"));
+    }
+
+    @Test
+    void aPaymentCapturedAfterTheOrderWasCancelledIsRefundedOnce() {
+        var order = placeOrder("k1").order();
+        cancel.execute(new CancelOrderUsecase.Request(customer, order.id()));
+        payment.status = "CAPTURED";
+
+        var event = paymentEvent(UUID.randomUUID(), "PAYMENT_SUCCESS", order.id());
+        onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(event));
+        onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(event));
+
+        assertThat(payment.refunded).containsExactly(order.id());
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(inventory.deducted).isEmpty();
+    }
+
+    @Test
+    void theTraceIdOfOrderCreatedFollowsTheSagaIntoLaterEvents() {
+        var order = placeOnly("k1").order();
+        var created = json.readTree(jdbc.queryForObject("SELECT payload FROM order_outbox WHERE event_type = 'ORDER_CREATED'", String.class));
+        assertThat(created.path("traceId").asString("")).matches("[0-9a-f]{32}");
+        var traced = "{\"eventId\":\"" + UUID.randomUUID() + "\",\"eventType\":\"INVENTORY_RESERVED\",\"traceId\":\""
+                + created.path("traceId").asString("") + "\",\"data\":{\"orderId\":\"" + order.id() + "\",\"reservations\":["
+                + inventory.reserve(order.id(), order.items().stream().map(i -> new ReserveLine(i.id(), i.supplierProductId(),
+                        i.warehouseId(), i.quantity())).toList(), Duration.ofMinutes(30)).stream().map(r -> "{\"orderItemId\":\""
+                        + r.orderItemId() + "\",\"reservationId\":\"" + r.reservationId() + "\"}")
+                .collect(java.util.stream.Collectors.joining(",")) + "]}}";
+
+        onInventoryEvent.execute(new HandleInventoryEventUsecase.Request(traced));
+
+        var requested = json.readTree(jdbc.queryForObject("SELECT payload FROM order_outbox WHERE event_type = 'PAYMENT_REQUESTED'", String.class));
+        assertThat(requested.path("traceId").asString("")).isEqualTo(created.path("traceId").asString(""));
     }
 
     @Test
@@ -502,14 +582,14 @@ class OrderFlowTest {
     }
 
     @Test
-    void paymentFailedEventFailsTheOrderAndReleasesStock() {
+    void paymentFailedEventKeepsTheOrderWaitingWhileAttemptsRemain() {
         var order = placeOrder("k1").order();
         payment.status = "FAILED";
 
         onPaymentEvent.execute(new HandlePaymentEventUsecase.Request(paymentEvent(UUID.randomUUID(), "PAYMENT_FAILED", order.id())));
 
-        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.FAILED);
-        assertThat(inventory.released).hasSize(2);
+        assertThat(orders.find(order.id()).orElseThrow().status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(inventory.released).isEmpty();
     }
 
     @Test
@@ -672,6 +752,8 @@ class OrderFlowTest {
 
     static class FakePayment implements PaymentGateway {
         final UUID intentId = UUID.randomUUID();
+        final UUID retryIntent = UUID.randomUUID();
+        final List<Integer> attempts = new ArrayList<>();
         final List<UUID> createdFor = new ArrayList<>();
         final List<UUID> refunded = new ArrayList<>();
         String status = "REQUIRES_ACTION";
@@ -679,14 +761,19 @@ class OrderFlowTest {
         RuntimeException failCreate;
 
         @Override
-        public PaymentSnapshot createIntent(UUID orderId, UUID customerId, BigDecimal amount, String currency, String provider) {
+        public PaymentSnapshot createIntent(UUID orderId, UUID customerId, BigDecimal amount, String currency, String provider,
+                                            int attempt) {
             if (failCreate != null) {
                 throw failCreate;
             }
             if (!createdFor.contains(orderId)) {
                 createdFor.add(orderId);
             }
-            return new PaymentSnapshot(intentId, "REQUIRES_ACTION", "secret", null, null);
+            if (attempt > 1) {
+                status = "REQUIRES_ACTION"; // a retry opens a fresh intent that is waiting for a payment method
+                attempts.add(attempt);
+            }
+            return new PaymentSnapshot(attempt <= 1 ? intentId : retryIntent, "REQUIRES_ACTION", "secret", null, null);
         }
 
         @Override

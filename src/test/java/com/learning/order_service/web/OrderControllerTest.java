@@ -55,7 +55,7 @@ class OrderControllerTest {
                 new BigDecimal("50"), 2, new BigDecimal("100"), "RESERVED", UUID.randomUUID(), UUID.randomUUID());
         return new Order(UUID.randomUUID(), "BZ-26101800001", user, status, "INR", new BigDecimal("100"), BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100"), new Address("Asha", "1 MG Road", null, "Bengaluru",
-                null, "560001", "IN", null), null, UUID.randomUUID(), null, "k", Instant.parse("2026-10-18T10:00:00Z"), null, null,
+                null, "560001", "IN", null), null, UUID.randomUUID(), null, 1, "k", Instant.parse("2026-10-18T10:00:00Z"), null, null,
                 null, List.of(item));
     }
 
@@ -132,7 +132,7 @@ class OrderControllerTest {
                 .andExpect(status().isBadRequest());
 
         when(pay.execute(any())).thenReturn(new PayOrderUsecase.Response(order(OrderStatus.FAILED),
-                new com.learning.order_service.core.domain.PaymentSnapshot(id, "FAILED", null, "card_declined", "declined")));
+                new com.learning.order_service.core.domain.PaymentSnapshot(id, "FAILED", null, "card_declined", "declined"), false));
         mvc.perform(post("/api/v1/orders/" + id + "/pay").header("X-User-Id", user.toString())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"paymentMethodToken\":\"tok_fail\"}"))
                 .andExpect(status().isOk())

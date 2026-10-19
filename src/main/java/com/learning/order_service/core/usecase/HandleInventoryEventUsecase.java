@@ -3,6 +3,8 @@ package com.learning.order_service.core.usecase;
 import com.learning.order_service.core.domain.Order;
 import com.learning.order_service.core.domain.OrderEvents;
 import com.learning.order_service.core.domain.OrderStatus;
+import com.learning.order_service.core.domain.Tracing;
+import tools.jackson.databind.JsonNode;
 import com.learning.order_service.core.domain.Reservation;
 import com.learning.order_service.core.service.lifecycle.OrderLifecycleService;
 import com.learning.order_service.core.service.lifecycle.OrderLifecycleServiceRequest;
@@ -62,6 +64,12 @@ public class HandleInventoryEventUsecase
     @Override
     public Response execute(Request request) {
         var root = json.readTree(request.payload());
+        try (var ignored = Tracing.continueTrace(root.path("traceId").asString(""))) {
+            return handle(root);
+        }
+    }
+
+    private Response handle(JsonNode root) {
         var type = root.path("eventType").asString("");
         if (!HANDLED.contains(type)) {
             return new Response(Outcome.IGNORED);

@@ -75,8 +75,9 @@ public class AppConfig {
     }
 
     @Bean
-    public PayOrderUsecase payOrderUsecase(OrderGateway orders, PaymentGateway payments, OrderLifecycleService lifecycle) {
-        return new PayOrderUsecase(orders, payments, lifecycle);
+    public PayOrderUsecase payOrderUsecase(OrderGateway orders, PaymentGateway payments, OrderLifecycleService lifecycle,
+                                           OrderProperties properties) {
+        return new PayOrderUsecase(orders, payments, lifecycle, properties);
     }
 
     @Bean
@@ -102,8 +103,8 @@ public class AppConfig {
 
     @Bean
     public HandlePaymentEventUsecase handlePaymentEventUsecase(OrderGateway orders, OrderLifecycleService lifecycle,
-                                                               JsonMapper json, Clock clock) {
-        return new HandlePaymentEventUsecase(orders, lifecycle, json, clock);
+                                                               PaymentGateway payments, JsonMapper json, Clock clock) {
+        return new HandlePaymentEventUsecase(orders, lifecycle, payments, json, clock);
     }
 
     @Bean
@@ -120,8 +121,8 @@ public class AppConfig {
     @Bean
     public OrderLifecycleService orderLifecycleService(OrderGateway orders, InventoryGateway inventory,
                                                        PaymentGateway payments, CartGateway carts, JsonMapper json,
-                                                       Clock clock) {
-        return new OrderLifecycleService(orders, inventory, payments, carts, json, clock);
+                                                       Clock clock, OrderProperties properties) {
+        return new OrderLifecycleService(orders, inventory, payments, carts, json, clock, properties);
     }
 
     // =========================================================================

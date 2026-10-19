@@ -1,5 +1,6 @@
 package com.learning.order_service.core.service.lifecycle;
 
+import com.learning.order_service.config.OrderProperties;
 import com.learning.order_service.core.domain.Order;
 import com.learning.order_service.core.domain.OrderEvents;
 import com.learning.order_service.core.domain.OrderStatus;
@@ -37,15 +38,17 @@ public class OrderLifecycleService implements Service<OrderLifecycleServiceReque
     private final CartGateway carts;
     private final JsonMapper json;
     private final Clock clock;
+    private final OrderProperties properties;
 
     public OrderLifecycleService(OrderGateway orders, InventoryGateway inventory, PaymentGateway payments,
-                                 CartGateway carts, JsonMapper json, Clock clock) {
+                                 CartGateway carts, JsonMapper json, Clock clock, OrderProperties properties) {
         this.orders = orders;
         this.inventory = inventory;
         this.payments = payments;
         this.carts = carts;
         this.json = json;
         this.clock = clock;
+        this.properties = properties;
     }
 
     @Override
@@ -66,10 +69,19 @@ public class OrderLifecycleService implements Service<OrderLifecycleServiceReque
             return confirm(order);
         }
         if (payment.isDead()) {
+            if (canRetry(order, payment)) {
+                return order; // the customer may pay again with another method, until attempts or time run out
+            }
             return abort(order, OrderStatus.FAILED, payment.failureCode() != null ? payment.failureCode() : "PAYMENT_FAILED",
                     "payment");
         }
         return order;
+    }
+
+    /** A declined or failed payment can be retried; a cancelled one cannot, and attempts are limited. */
+    public boolean canRetry(Order order, PaymentSnapshot payment) {
+        return payment.isDead() && !"CANCELLED".equals(payment.status())
+                && order.paymentAttempts() < properties.maxPaymentAttempts();
     }
 
     private Order confirm(Order order) {

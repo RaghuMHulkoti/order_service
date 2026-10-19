@@ -79,7 +79,8 @@ public class OrderController {
         var payment = result.payment();
         return ok("Order " + result.order().status().name().toLowerCase().replace('_', ' '),
                 new PayOrderResponse(OrderResponseMapper.toResponse(result.order()), payment.status(),
-                        payment.failureCode(), payment.failureMessage()));
+                        payment.failureCode(), payment.failureMessage(), result.order().paymentAttempts(),
+                        result.canRetry()));
     }
 
     @PostMapping("/{id}/cancel")

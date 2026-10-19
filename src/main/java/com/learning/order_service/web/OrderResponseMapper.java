@@ -19,7 +19,7 @@ final class OrderResponseMapper {
                 .toList();
         return new OrderResponse(o.id(), o.orderNumber(), o.status().name(), o.currency(),
                 new OrderResponse.Amount(o.subtotal(), o.discount(), o.tax(), o.shippingFee(), o.total()),
-                o.shippingAddress(), o.billingAddress(), o.paymentIntentId(), items, o.placedAt(), o.confirmedAt(),
+                o.shippingAddress(), o.billingAddress(), o.paymentIntentId(), o.paymentAttempts(), items, o.placedAt(), o.confirmedAt(),
                 o.cancelledAt(), o.cancelReason(),
                 clientSecret == null ? null : new OrderResponse.NextAction("CONFIRM_PAYMENT", clientSecret));
     }

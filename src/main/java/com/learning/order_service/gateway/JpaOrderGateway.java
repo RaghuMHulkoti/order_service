@@ -73,7 +73,7 @@ public class JpaOrderGateway implements OrderGateway {
                         .subtotal(o.subtotal()).discount(o.discount()).shippingFee(o.shippingFee()).tax(o.tax())
                         .total(o.total()).shippingAddress(json.writeValueAsString(o.shippingAddress()))
                         .billingAddress(o.billingAddress() == null ? null : json.writeValueAsString(o.billingAddress()))
-                        .paymentProvider(o.paymentProvider()).idempotencyKey(o.idempotencyKey()).placedAt(o.placedAt())
+                        .paymentProvider(o.paymentProvider()).paymentAttempts(1).idempotencyKey(o.idempotencyKey()).placedAt(o.placedAt())
                         .updatedAt(now).build());
                 items.saveAll(o.items().stream().map(i -> OrderItemEntity.builder().id(i.id()).orderId(o.id())
                         .productId(i.productId()).supplierProductId(i.supplierProductId()).supplierId(i.supplierId())
@@ -142,6 +142,18 @@ public class JpaOrderGateway implements OrderGateway {
         guard("save payment intent", () -> tx.execute(status -> {
             orders.findById(orderId).ifPresent(e -> {
                 e.setPaymentIntentId(paymentIntentId);
+                orders.saveAndFlush(e);
+            });
+            return null;
+        }));
+    }
+
+    @Override
+    public void startPaymentAttempt(UUID orderId, UUID paymentIntentId) {
+        guard("start payment attempt", () -> tx.execute(status -> {
+            orders.findById(orderId).ifPresent(e -> {
+                e.setPaymentIntentId(paymentIntentId);
+                e.setPaymentAttempts(e.getPaymentAttempts() + 1);
                 orders.saveAndFlush(e);
             });
             return null;
@@ -241,7 +253,7 @@ public class JpaOrderGateway implements OrderGateway {
                 e.getCurrency().trim(), e.getSubtotal(), e.getDiscount(), e.getShippingFee(), e.getTax(), e.getTotal(),
                 json.readValue(e.getShippingAddress(), Address.class),
                 e.getBillingAddress() == null ? null : json.readValue(e.getBillingAddress(), Address.class),
-                e.getPaymentIntentId(), e.getPaymentProvider(), e.getIdempotencyKey(), e.getPlacedAt(), e.getConfirmedAt(), e.getCancelledAt(),
+                e.getPaymentIntentId(), e.getPaymentProvider(), e.getPaymentAttempts(), e.getIdempotencyKey(), e.getPlacedAt(), e.getConfirmedAt(), e.getCancelledAt(),
                 e.getCancelReason(), lines);
     }
 

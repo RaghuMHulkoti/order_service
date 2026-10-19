@@ -72,6 +72,9 @@ public class OrderEntity {
     @Column(name = "payment_provider")
     private String paymentProvider;
 
+    @Column(name = "payment_attempts", nullable = false)
+    private Integer paymentAttempts;
+
     @Column(name = "idempotency_key", nullable = false)
     private String idempotencyKey;
 

@@ -21,6 +21,7 @@ public final class OrderEvents {
         envelope.put("eventType", type);
         envelope.put("occurredAt", at.toString());
         envelope.put("producer", PRODUCER);
+        envelope.put("traceId", Tracing.current());
         envelope.put("version", 1);
         envelope.put("data", data);
         return json.writeValueAsString(envelope);

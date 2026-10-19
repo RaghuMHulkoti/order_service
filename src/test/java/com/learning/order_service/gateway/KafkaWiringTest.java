@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.flyway.enabled=false",
         "spring.jpa.properties.hibernate.default_schema=PUBLIC",
         "spring.sql.init.mode=always",
-        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql,classpath:db/migration/V2__outbox_relay_and_inbox.sql,classpath:db/migration/V3__payment_provider.sql",
+        "spring.sql.init.schema-locations=classpath:db/migration/V1__create_order_schema.sql,classpath:db/migration/V2__outbox_relay_and_inbox.sql,classpath:db/migration/V3__payment_provider.sql,classpath:db/migration/V4__payment_attempts.sql",
         "order.jobs.enabled=false",
         "order.events.publisher=kafka",
         "order.events.consumer-enabled=true",
