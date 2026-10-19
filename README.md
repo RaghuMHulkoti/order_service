@@ -230,3 +230,7 @@ stateDiagram-v2
 - Trusts `X-User-Id`; no JWT check yet.
 - Shipping, delivery, returns and invoices are not built (the statuses exist in the schema).
 - Taxes, shipping fees and coupons are always zero.
+
+## License
+
+Copyright (c) 2026 Raghavendra. All rights reserved. The code is published for viewing only; copying or reuse requires written permission. See [LICENSE](LICENSE).
