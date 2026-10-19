@@ -1,6 +1,6 @@
 # Order Service
 
-Checkout saga and order lifecycle (TDD §8.7, §12.6). Spring Boot 4 / Java 25, Oracle schema `ORDERS`, port **8086**.
+Checkout saga and order lifecycle of the ShopTrail marketplace (TDD §8.7, §12.6). Spring Boot 4 / Java 25, Oracle schema `ORDERS`, port **8086**.
 Same layering as the other services: `web` -> `core/usecase` -> `core/service` -> `gateway`.
 
 ## Run

@@ -12,7 +12,7 @@ public class OpenApiConfig {
     public OpenAPI orderServiceOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("Order Service API")
+                        .title("ShopTrail Order Service API")
                         .description("Checkout saga and order lifecycle. Orders live in Oracle (schema ORDERS). "
                                 + "Cart, Inventory and Payment are called over REST; this service never owns their data. "
                                 + "The caller identity arrives in the X-User-Id header set by the API gateway.")
