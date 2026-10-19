@@ -318,7 +318,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     const names = [["order", "orderUrl"], ["cart", "cartUrl"], ["product", "productUrl"], ["payment", "paymentUrl"]];
     let failed = 0;
     await Promise.all(names.map(async ([, id]) => {
-      try { await fetch(base(id) + "/actuator/health", { mode: "cors" }); } catch (e) { failed++; }
+      // no-cors: only a network failure throws, so a service that does not allow this origin on /actuator still counts as reachable
+      try { await fetch(base(id) + "/actuator/health", { mode: "no-cors" }); } catch (e) { failed++; }
     }));
     $("blocked").hidden = failed === 0;
     $("conn").textContent = failed === 0 ? "services reachable" : failed + " of 4 unreachable";
