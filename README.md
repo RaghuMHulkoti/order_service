@@ -2,7 +2,7 @@
 
 Checkout and order lifecycle for ShopTrail. It orchestrates the order saga: reserve stock, take payment, confirm, or compensate.
 
-Part of **ShopTrail**, a multi-seller marketplace. Full system reference: [`marketplace_tdd.md`](https://github.com/RaghuMHulkoti/inventory-manager/blob/main/marketplace_tdd.md).
+Part of **ShopTrail**, a multi-seller marketplace. Full system reference: [`marketplace_tdd.md`](https://github.com/RaghuMHulkoti/shoptrail/blob/main/docs/marketplace_tdd.md).
 
 | | |
 |---|---|
@@ -98,7 +98,7 @@ Responses are wrapped as `{"status", "message", "body"}`. `POST /api/v1/orders` 
 
 ## Data model
 
-Schema `ORDERS`. Full columns and constraints: [section 8 of the reference](https://github.com/RaghuMHulkoti/inventory-manager/blob/main/marketplace_tdd.md#8-data-model).
+Schema `ORDERS`. Full columns and constraints: [section 8 of the reference](https://github.com/RaghuMHulkoti/shoptrail/blob/main/docs/marketplace_tdd.md#8-data-model).
 
 ```mermaid
 erDiagram
