@@ -19,7 +19,7 @@ Part of **ShopTrail**, a multi-seller marketplace. Full system reference: [`mark
 - Drive the saga: `ORDER_CREATED` to inventory, `PAYMENT_REQUESTED` to payment, confirm on `PAYMENT_SUCCESS`, compensate on failures.
 - Payment retries (up to 3 attempts, a new intent each time) and a 15-minute payment timeout.
 - Order history and status for the customer.
-- Serves the **ShopTrail Orders** console at `/console.html` (sign-in required).
+- Serves the **ShopTrail Orders** test console at `/console.html` (sign-in required). It exists only to exercise the checkout flow from a browser; a dedicated frontend has not been built yet.
 
 ## How it fits
 
