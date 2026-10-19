@@ -112,7 +112,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <div id="blocked" class="banner" hidden>
     This page cannot reach the services from here (the claude.ai preview blocks outside requests, or CORS is not enabled yet).
     Open the working console at <a id="liveLink" href="#" target="_blank" rel="noopener"></a>
-    and set <span class="mono">CORS_ALLOWED_ORIGINS</span> on the order, cart and product services to that address.
+    and set <span class="mono">CORS_ALLOWED_ORIGINS</span> on the order, cart, product and payment services to that address.
   </div>
 
   <section class="panel" aria-labelledby="h-conn">
@@ -121,6 +121,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <label>Order service <input id="orderUrl" autocomplete="off"></label>
       <label>Cart service <input id="cartUrl" autocomplete="off"></label>
       <label>Product service <input id="productUrl" autocomplete="off"></label>
+      <label>Payment service <input id="paymentUrl" autocomplete="off"></label>
       <label>Customer id <input id="userId" autocomplete="off"></label>
     </div>
     <div class="row" style="margin-top:8px">
@@ -185,9 +186,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         <label style="margin-top:8px">Or a custom payment method / token <input id="customToken" placeholder="pm_card_visa" autocomplete="off"></label>
         <div class="row" style="margin-top:10px">
           <button id="pay" class="primary" type="button" disabled>Pay order</button>
+          <button id="rzp" type="button" disabled>Pay with Razorpay Checkout</button>
           <button id="cancel" class="danger" type="button" disabled>Cancel order</button>
         </div>
         <div id="payResult" class="note" role="status"></div>
+        <p class="note">Razorpay Checkout works for orders placed with the RAZORPAY provider. In test mode use card 4111 1111 1111 1111, any future expiry and any CVV, or UPI <span class="mono">success@razorpay</span>.</p>
         <p class="note">A declined payment keeps the order open. Pay again with another method: each try opens a new payment, up to three.</p>
       </section>
 
@@ -206,6 +209,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   </section>
 </div>
 
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
 (function () {
   "use strict";
@@ -213,7 +217,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   const DEFAULTS = {
     order: location.protocol.startsWith("http") ? location.origin : "https://order-service-nf43.onrender.com",
     cart: "https://cart-service-csoc.onrender.com",
-    product: "https://product-service-1o2l.onrender.com"
+    product: "https://product-service-1o2l.onrender.com",
+    payment: "https://payment-service-iyeh.onrender.com"
   };
   const TERMINAL = ["CONFIRMED", "FAILED", "CANCELLED"];
   const TOKENS = [
@@ -254,10 +259,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   $("orderUrl").value = store.get("oc.order", DEFAULTS.order);
   $("cartUrl").value = store.get("oc.cart", DEFAULTS.cart);
   $("productUrl").value = store.get("oc.product", DEFAULTS.product);
+  $("paymentUrl").value = store.get("oc.payment", DEFAULTS.payment);
   $("userId").value = store.get("oc.user", uuid());
   const base = (id) => $(id).value.trim().replace(/\/+$/, "");
-  ["orderUrl", "cartUrl", "productUrl", "userId"].forEach((id) => $(id).addEventListener("change", () => {
-    store.set({ orderUrl: "oc.order", cartUrl: "oc.cart", productUrl: "oc.product", userId: "oc.user" }[id], $(id).value.trim());
+  ["orderUrl", "cartUrl", "productUrl", "paymentUrl", "userId"].forEach((id) => $(id).addEventListener("change", () => {
+    store.set({ orderUrl: "oc.order", cartUrl: "oc.cart", productUrl: "oc.product", paymentUrl: "oc.payment", userId: "oc.user" }[id], $(id).value.trim());
   }));
   store.set("oc.user", $("userId").value);
   $("liveLink").href = DEFAULTS.order + "/console.html";
@@ -309,13 +315,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   // ----- connectivity
   async function checkConnectivity() {
-    const names = [["order", "orderUrl"], ["cart", "cartUrl"], ["product", "productUrl"]];
+    const names = [["order", "orderUrl"], ["cart", "cartUrl"], ["product", "productUrl"], ["payment", "paymentUrl"]];
     let failed = 0;
     await Promise.all(names.map(async ([, id]) => {
       try { await fetch(base(id) + "/actuator/health", { mode: "cors" }); } catch (e) { failed++; }
     }));
     $("blocked").hidden = failed === 0;
-    $("conn").textContent = failed === 0 ? "services reachable" : failed + " of 3 unreachable";
+    $("conn").textContent = failed === 0 ? "services reachable" : failed + " of 4 unreachable";
     $("conn").className = "chip " + (failed === 0 ? "ok" : "bad");
   }
 
@@ -403,7 +409,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     try { const data = await api("orderUrl", "/api/v1/orders/" + current.orderId); render(data.body); } catch (e) { /* keep polling */ }
   }
   function render(o) {
-    current = { orderId: o.orderId, status: o.status };
+    current = { orderId: o.orderId, status: o.status, paymentId: o.paymentId };
     $("tNumber").textContent = o.orderNumber;
     $("tStatus").textContent = o.status.replace("_", " "); $("tStatus").className = "chip " + statusClass(o.status);
     $("tAmount").textContent = money(o.amount.total, o.currency);
@@ -419,6 +425,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     const done = TERMINAL.includes(o.status);
     $("tLive").hidden = done;
     $("pay").disabled = !(o.status === "PAYMENT_PENDING" && o.paymentId);
+    $("rzp").disabled = $("pay").disabled;
     $("cancel").disabled = done;
     if (done) { clearInterval(timer); loadOrders(); }
   }
@@ -446,6 +453,37 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       render(b.order); if (!TERMINAL.includes(b.order.status)) { clearInterval(timer); timer = setInterval(poll, 2000); }
     } catch (e) { $("payResult").textContent = "Payment not processed: " + e.message; }
     finally { if (current && current.status === "PAYMENT_PENDING") $("pay").disabled = false; }
+  });
+  // ----- Razorpay Standard Checkout: payment service gives order id + public key, the modal pays, the server verifies the signature
+  async function verifyRazorpay(response) {
+    $("payResult").textContent = "Verifying payment signature…";
+    try {
+      await api("paymentUrl", "/api/v1/payments/" + current.paymentId + "/razorpay/verify", { method: "POST", body: {
+        razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature } });
+      $("payResult").textContent = "Payment verified. The order confirms as soon as the payment event arrives.";
+      note("Razorpay payment verified " + response.razorpay_payment_id);
+      clearInterval(timer); timer = setInterval(poll, 2000); poll();
+    } catch (e) {
+      $("payResult").textContent = e.status === 400 ? "Signature did not match, so the payment was not marked paid." : "Verification failed: " + e.message;
+    }
+  }
+  $("rzp").addEventListener("click", async () => {
+    if (!current || !current.paymentId) return;
+    if (typeof Razorpay === "undefined") { $("payResult").textContent = "Razorpay Checkout did not load. Check your connection."; return; }
+    $("payResult").textContent = "Opening Razorpay Checkout…";
+    try {
+      const data = await api("paymentUrl", "/api/v1/payments/" + current.paymentId + "/checkout");
+      const c = data.body;
+      const rzp = new Razorpay({
+        key: c.keyId, order_id: c.orderId, amount: c.amount, currency: c.currency,
+        name: "Order Test Console", description: $("tNumber").textContent,
+        theme: { color: "#0d6b5f" },
+        handler: verifyRazorpay,
+        modal: { ondismiss: () => { $("payResult").textContent = "Checkout closed without paying. The order is still open."; } }
+      });
+      rzp.on("payment.failed", (r) => { $("payResult").textContent = "Payment failed: " + ((r.error && r.error.description) || "unknown reason") + ". You can try again."; note("Razorpay payment failed"); });
+      rzp.open();
+    } catch (e) { $("payResult").textContent = "Could not start Checkout: " + e.message; }
   });
   $("cancel").addEventListener("click", async () => {
     if (!current) return;
