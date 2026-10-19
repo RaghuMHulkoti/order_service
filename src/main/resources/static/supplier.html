@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supplier Portal</title>
+<style>
+/* Same workbench look as the order console; this page is the seller's side: supplier, warehouse, product, stock. */
+:root {
+  --bg: #f3f5f4; --panel: #ffffff; --ink: #17211f; --muted: #5b6a66; --line: #d5dcda;
+  --accent: #0d6b5f; --accent-ink: #ffffff; --accent-soft: #dcefeb;
+  --ok: #17683a; --ok-soft: #dcf1e3; --warn: #8a5a00; --warn-soft: #fbecc8; --bad: #a3271f; --bad-soft: #f8dcd9;
+  --code-bg: #eaeeed;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1514; --panel: #172120; --ink: #e5eeec; --muted: #92a39f; --line: #2b3a37;
+    --accent: #3fb8a5; --accent-ink: #06201c; --accent-soft: #1b3a35;
+    --ok: #6fd391; --ok-soft: #173b27; --warn: #f0c46a; --warn-soft: #3b2f10; --bad: #f19489; --bad-soft: #442020;
+    --code-bg: #101918; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1514; --panel: #172120; --ink: #e5eeec; --muted: #92a39f; --line: #2b3a37;
+  --accent: #3fb8a5; --accent-ink: #06201c; --accent-soft: #1b3a35;
+  --ok: #6fd391; --ok-soft: #173b27; --warn: #f0c46a; --warn-soft: #3b2f10; --bad: #f19489; --bad-soft: #442020;
+  --code-bg: #101918; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.45; margin: 0; padding-inline: 16px; padding-block: 16px 40px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; font-weight: 650; }
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+header p { margin: 0; color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.grid2 { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.cols { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.stack { display: grid; gap: 16px; min-width: 0; }
+label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; min-width: 0; width: 100%; }
+textarea { min-height: 70px; font-family: var(--mono); font-size: 12px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px; padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+a { color: var(--accent); }
+.mono { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.msg { margin-top: 8px; font-size: 13px; }
+.msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+.list { display: grid; gap: 6px; }
+.item { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
+.item > div { min-width: 0; }
+.chip { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); } .chip.bad { background: var(--bad-soft); color: var(--bad); }
+.current { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; background: var(--accent-soft); }
+.stockrow { display: grid; gap: 8px; grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) auto; align-items: end; }
+@media (max-width: 640px) { .stockrow { grid-template-columns: minmax(0, 1fr); } }
+.log { background: var(--code-bg); border-radius: 6px; padding: 8px; max-height: 300px; overflow: auto; font-family: var(--mono); font-size: 12px; }
+.log div { padding: 3px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.log summary { cursor: pointer; }
+.log pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Supplier Portal</h1>
+      <p>Set up a seller, its warehouse, its products and prices, then push stock. Real calls to the live services.</p>
+    </div>
+    <div class="row"><a href="console.html">Open the order console</a><button id="theme" type="button" aria-label="Switch colour theme">Theme</button></div>
+  </header>
+
+  <section class="panel" aria-labelledby="h-conn">
+    <h2 id="h-conn">Connection</h2>
+    <div class="grid2">
+      <label>Supplier service <input id="supplierUrl" autocomplete="off"></label>
+      <label>Inventory service <input id="inventoryUrl" autocomplete="off"></label>
+      <label>Product service <input id="productUrl" autocomplete="off"></label>
+    </div>
+    <p class="note">Everything below acts for the current supplier. Create one in step 1, or load an existing one by id.</p>
+    <div id="current" class="current" style="margin-top:8px"><span class="muted">No supplier selected.</span></div>
+  </section>
+
+  <div class="cols">
+    <div class="stack">
+      <section class="panel" aria-labelledby="h-sup">
+        <h2 id="h-sup">1. Supplier</h2>
+        <div class="grid2">
+          <label>Legal name <input id="sLegal" value="UI Test Traders Pvt Ltd"></label>
+          <label>Display name <input id="sDisplay" value="UI Test Traders"></label>
+          <label>Email <input id="sEmail" type="email" value="seller@example.com"></label>
+          <label>Phone <input id="sPhone" value="+919876543210"></label>
+          <label>Tax id <input id="sTax" value="29ABCDE1234F1Z5"></label>
+          <label>Country <input id="sCountry" value="IN" maxlength="2"></label>
+          <label>Commission % <input id="sCommission" type="number" step="0.01" value="10"></label>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="createSupplier" class="primary" type="button">Create supplier</button></div>
+        <div id="supMsg" class="msg" role="status"></div>
+        <div class="row" style="margin-top:12px">
+          <label style="flex:1">Or load an existing supplier by id <input id="existingSupplier" placeholder="supplier id" autocomplete="off"></label>
+          <button id="loadSupplier" type="button" style="align-self:end">Load</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-wh">
+        <h2 id="h-wh">2. Warehouse</h2>
+        <div class="grid2">
+          <label>Name <input id="wName" value="Bengaluru Hub"></label>
+          <label>Code <input id="wCode" value="BLR-01"></label>
+          <label>Address <input id="wLine" value="12 Industrial Layout"></label>
+          <label>City <input id="wCity" value="Bengaluru"></label>
+          <label>State <input id="wState" value="KA"></label>
+          <label>Postal code <input id="wZip" value="560058"></label>
+          <label>Country <input id="wCountry" value="IN" maxlength="2"></label>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="createWarehouse" class="primary" type="button" disabled>Create warehouse</button></div>
+        <p class="note">Creates the warehouse for the supplier and registers the same warehouse with inventory, so stock can be held in it.</p>
+        <div id="whMsg" class="msg" role="status"></div>
+        <div id="warehouses" class="list" style="margin-top:10px"></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="panel" aria-labelledby="h-prod">
+        <h2 id="h-prod">3. Product</h2>
+        <div class="grid2">
+          <label>SKU <input id="pSku" value="ACME-HD-001"></label>
+          <label>Title <input id="pTitle" value="Acme Wired Headphones"></label>
+          <label>Brand <select id="pBrand"></select></label>
+          <label>Category <select id="pCategory"></select></label>
+          <label>Weight (grams) <input id="pWeight" type="number" min="0" value="250"></label>
+          <label>Status <select id="pStatus"><option>ACTIVE</option><option>DRAFT</option></select></label>
+        </div>
+        <label style="margin-top:8px">Description <input id="pDesc" value="Over-ear wired headphones with a 3.5 mm jack."></label>
+        <label style="margin-top:8px">Attributes, one per line as name=value <textarea id="pAttrs">color=Black
+connector=3.5mm</textarea></label>
+        <div class="row" style="margin-top:10px"><button id="createProduct" class="primary" type="button">Create product</button></div>
+        <div id="prodMsg" class="msg" role="status"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-offer">
+        <h2 id="h-offer">Price this product (offer)</h2>
+        <div class="grid2">
+          <label>Product <select id="oProduct"></select></label>
+          <label>Your SKU <input id="oSku" placeholder="ACME-HD-001-S1"></label>
+          <label>Price <input id="oPrice" type="number" min="0.01" step="0.01" value="1499"></label>
+          <label>Currency <input id="oCurrency" value="INR" maxlength="3"></label>
+          <label>Condition <select id="oCondition"><option>NEW</option><option>REFURBISHED</option><option>USED_LIKE_NEW</option></select></label>
+          <label>Handling days <input id="oDays" type="number" min="0" value="2"></label>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="createOffer" class="primary" type="button" disabled>Create offer</button><button id="refreshProducts" type="button">Refresh products</button></div>
+        <div id="offerMsg" class="msg" role="status"></div>
+        <div id="offers" class="list" style="margin-top:10px"></div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel" aria-labelledby="h-stock">
+    <h2 id="h-stock">4. Push inventory</h2>
+    <div id="stockRows" class="list"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="addRow" type="button">Add row</button>
+      <button id="pushStock" class="primary" type="button" disabled>Push stock</button>
+      <button id="refreshLists" type="button">Refresh offers and warehouses</button>
+    </div>
+    <p class="note">Each row sets the quantity on hand for one offer in one warehouse. Pushing the same row again replaces the number.</p>
+    <div id="stockMsg" class="msg" role="status"></div>
+    <div id="stockResult" class="list" style="margin-top:10px"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-log">
+    <h2 id="h-log">Requests</h2>
+    <div class="row" style="margin-bottom:8px"><button id="clearLog" type="button">Clear</button></div>
+    <div id="log" class="log"><div class="muted">Calls made by this page appear here.</div></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const DEFAULTS = {
+    supplier: "https://supplier-service-tha0.onrender.com",
+    inventory: "https://inventory-manager-8q64.onrender.com",
+    product: "https://product-service-1o2l.onrender.com"
+  };
+  const store = {
+    get(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+  };
+  const clock = () => new Date().toLocaleTimeString([], { hour12: false });
+  const money = (n, c) => (c || "") + " " + Number(n).toLocaleString("en-IN");
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v); }
+    kids.flat().forEach((kid) => { if (kid !== null && kid !== undefined && kid !== false) n.append(kid); });
+    return n;
+  }
+
+  $("supplierUrl").value = store.get("sp.supplier", DEFAULTS.supplier);
+  $("inventoryUrl").value = store.get("sp.inventory", DEFAULTS.inventory);
+  $("productUrl").value = store.get("sp.product", DEFAULTS.product);
+  ["supplier", "inventory", "product"].forEach((n) => $(n + "Url").addEventListener("change", () => store.set("sp." + n, $(n + "Url").value.trim())));
+  const base = (n) => $(n + "Url").value.trim().replace(/\/+$/, "");
+
+  $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+
+  // ----- request log and API helper
+  function log(method, url, status, ms, payload) {
+    const box = $("log");
+    if (box.firstChild && box.firstChild.classList.contains("muted")) box.textContent = "";
+    const sum = el("summary", { text: clock() + "  " + method + " " + url.replace(/^https?:\/\/[^/]+/, "") + "  → " + status + "  (" + ms + " ms)" });
+    sum.style.color = status >= 200 && status < 300 ? "var(--ok)" : "var(--bad)";
+    box.prepend(el("div", {}, el("details", {}, sum, el("pre", { text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2) }))));
+  }
+  $("clearLog").addEventListener("click", () => { $("log").textContent = ""; });
+
+  async function api(service, path, opts) {
+    const o = opts || {};
+    const url = base(service) + path;
+    const t0 = performance.now();
+    let res, text;
+    try {
+      res = await fetch(url, { method: o.method || "GET", headers: o.body ? { "Content-Type": "application/json" } : {}, body: o.body ? JSON.stringify(o.body) : undefined });
+      text = await res.text();
+    } catch (e) {
+      log(o.method || "GET", url, 0, Math.round(performance.now() - t0), "Network error: " + e.message);
+      throw new Error("Cannot reach the " + service + " service. If this page is not served by the order service, set CORS_ALLOWED_ORIGINS on that service.");
+    }
+    let json = null;
+    try { json = JSON.parse(text); } catch (e) { /* not json */ }
+    log(o.method || "GET", url, res.status, Math.round(performance.now() - t0), json || text);
+    if (!res.ok) {
+      const b = (json && json.body) || {};
+      const detail = b.details ? " (" + Object.entries(b.details).map(([k, v]) => k + ": " + v).join("; ") + ")" : "";
+      throw new Error(((json && (b.message || json.message)) || res.statusText || "Request failed") + detail);
+    }
+    return json;
+  }
+  const body = (d) => (d && d.body !== undefined ? d.body : d);
+  const rows = (d) => { const b = body(d); return Array.isArray(b) ? b : (b && (b.items || b.content || b.warehouses || b.offers || b.suppliers)) || []; };
+  /** Services answer a create with either the new id as plain text or an object that holds it. */
+  const idOf = (x, key) => (typeof x === "string" ? x : x && (x[key] || x.id)) || "";
+  const say = (id, text, kind) => { const m = $(id); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+
+  // ----- current supplier
+  let supplierId = store.get("sp.supplierId", "");
+  let warehouses = [], offers = [], products = [];
+  function showSupplier(name) {
+    const box = $("current"); box.textContent = "";
+    if (!supplierId) { box.append(el("span", { class: "muted", text: "No supplier selected." })); }
+    else box.append(el("strong", { text: name || "Supplier" }), el("span", { class: "mono", text: supplierId }));
+    ["createWarehouse", "createOffer"].forEach((id) => { $(id).disabled = !supplierId; });
+    $("pushStock").disabled = !supplierId;
+  }
+  function use(id, name) { supplierId = id; store.set("sp.supplierId", id); showSupplier(name); loadWarehouses(); loadOffers(); }
+
+  $("createSupplier").addEventListener("click", async () => {
+    say("supMsg", "Creating supplier…");
+    try {
+      const data = await api("supplier", "/api/v1/suppliers", { method: "POST", body: {
+        legalName: $("sLegal").value.trim(), displayName: $("sDisplay").value.trim(), email: $("sEmail").value.trim(),
+        phone: $("sPhone").value.trim() || null, taxId: $("sTax").value.trim(), country: $("sCountry").value.trim().toUpperCase(),
+        commissionPct: Number($("sCommission").value) } });
+      const s = body(data);
+      const id = idOf(s, "supplierId");
+      if (!id) throw new Error("The supplier was created but no id came back. See the request log.");
+      say("supMsg", "Supplier created.", "ok");
+      use(id, s.displayName || $("sDisplay").value.trim());
+    } catch (e) { say("supMsg", e.message, "bad"); }
+  });
+  $("loadSupplier").addEventListener("click", async () => {
+    const id = $("existingSupplier").value.trim();
+    if (!id) { say("supMsg", "Enter a supplier id.", "bad"); return; }
+    try { const s = body(await api("supplier", "/api/v1/suppliers/" + encodeURIComponent(id))); say("supMsg", "Supplier loaded.", "ok"); use(idOf(s, "supplierId") || id, s.displayName); }
+    catch (e) { say("supMsg", e.message, "bad"); }
+  });
+
+  // ----- warehouses
+  async function loadWarehouses() {
+    const box = $("warehouses"); box.textContent = "";
+    if (!supplierId) return;
+    try { warehouses = rows(await api("supplier", "/api/v1/warehouses/" + supplierId + "/warehouses")); } catch (e) { warehouses = []; box.append(el("span", { class: "muted", text: "Could not list warehouses: " + e.message })); }
+    warehouses.forEach((w) => box.append(el("div", { class: "item" }, el("div", {}, el("strong", { text: w.name || w.code }), el("div", { class: "mono muted", text: (w.id || w.warehouseId) })), el("span", { class: "chip", text: w.code || "" }))));
+    if (!warehouses.length && !box.childNodes.length) box.append(el("span", { class: "muted", text: "No warehouses yet." }));
+    drawStockRows();
+  }
+  $("createWarehouse").addEventListener("click", async () => {
+    say("whMsg", "Creating warehouse…");
+    try {
+      const created = body(await api("supplier", "/api/v1/warehouses/" + supplierId + "/warehouses", { method: "POST", body: {
+        supplierId, name: $("wName").value.trim(), code: $("wCode").value.trim(), addressLine1: $("wLine").value.trim(),
+        city: $("wCity").value.trim(), state: $("wState").value.trim(), postalCode: $("wZip").value.trim(), country: $("wCountry").value.trim().toUpperCase() } }));
+      const warehouseId = idOf(created, "warehouseId");
+      if (!warehouseId) throw new Error("The warehouse was created but no id came back. See the request log.");
+      say("whMsg", "Warehouse created. Registering it with inventory…");
+      await api("inventory", "/api/v1/warehouses", { method: "POST", body: {
+        warehouseId, supplierId, code: $("wCode").value.trim(), name: $("wName").value.trim(), city: $("wCity").value.trim(),
+        state: $("wState").value.trim(), country: $("wCountry").value.trim().toUpperCase(), active: true } });
+      say("whMsg", "Warehouse created and registered with inventory.", "ok");
+      loadWarehouses();
+    } catch (e) { say("whMsg", e.message, "bad"); }
+  });
+
+  // ----- products and offers
+  async function loadCatalogueChoices() {
+    try {
+      const brands = rows(await api("product", "/api/v1/brands"));
+      $("pBrand").textContent = "";
+      $("pBrand").append(el("option", { value: "", text: "No brand" }), ...brands.map((b) => el("option", { value: b.id, text: b.name })));
+      const flat = [];
+      (function walk(list, depth) { (list || []).forEach((c) => { flat.push([c, depth]); walk(c.children, depth + 1); }); })(rows(await api("product", "/api/v1/categories")), 0);
+      $("pCategory").textContent = "";
+      flat.forEach(([c, d]) => $("pCategory").append(el("option", { value: c.id, text: "— ".repeat(d) + c.name })));
+      const phones = [...$("pCategory").options].find((o) => /smartphones/i.test(o.textContent));
+      if (!phones && $("pCategory").options.length > 1) $("pCategory").selectedIndex = $("pCategory").options.length - 1;
+    } catch (e) { say("prodMsg", "Could not load brands and categories: " + e.message, "bad"); }
+  }
+  async function loadProducts(selectId) {
+    try { products = rows(await api("product", "/api/v1/products?size=100")); } catch (e) { products = []; }
+    const sel = $("oProduct"); sel.textContent = "";
+    products.forEach((p) => sel.append(el("option", { value: p.id, text: p.title + " (" + p.sku + ")" })));
+    if (selectId) sel.value = selectId;
+    syncOfferSku();
+  }
+  function syncOfferSku() { const p = products.find((x) => x.id === $("oProduct").value); if (p && !$("oSku").dataset.touched) $("oSku").value = p.sku + "-S1"; }
+  $("oSku").addEventListener("input", () => { $("oSku").dataset.touched = "1"; });
+  $("oProduct").addEventListener("change", () => { delete $("oSku").dataset.touched; syncOfferSku(); });
+  $("refreshProducts").addEventListener("click", () => loadProducts());
+
+  $("createProduct").addEventListener("click", async () => {
+    say("prodMsg", "Creating product…");
+    const attributes = {};
+    $("pAttrs").value.split("\n").map((l) => l.trim()).filter(Boolean).forEach((l) => { const i = l.indexOf("="); if (i > 0) attributes[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
+    try {
+      const p = body(await api("product", "/api/v1/products", { method: "POST", body: {
+        sku: $("pSku").value.trim(), title: $("pTitle").value.trim(), description: $("pDesc").value.trim(),
+        brandId: $("pBrand").value ? Number($("pBrand").value) : null, categoryId: Number($("pCategory").value), attributes,
+        weightGrams: $("pWeight").value ? Number($("pWeight").value) : null, status: $("pStatus").value } }));
+      say("prodMsg", "Product created. Price it below to make it sellable.", "ok");
+      delete $("oSku").dataset.touched;
+      await loadProducts(idOf(p, "id"));
+    } catch (e) { say("prodMsg", e.message, "bad"); }
+  });
+
+  async function loadOffers() {
+    const box = $("offers"); box.textContent = "";
+    if (!supplierId) return;
+    try { offers = rows(await api("supplier", "/api/v1/internal/offers/" + supplierId + "/offers")); } catch (e) { offers = []; box.append(el("span", { class: "muted", text: "Could not list offers: " + e.message })); }
+    offers.forEach((o) => {
+      const p = products.find((x) => x.id === o.productId);
+      box.append(el("div", { class: "item" }, el("div", {}, el("strong", { text: p ? p.title : o.supplierSku }), el("div", { class: "mono muted", text: o.offerId || o.id })),
+        el("div", { class: "row" }, el("strong", { text: money(o.price, o.currency) }), el("span", { class: "chip " + (o.active === false ? "bad" : "ok"), text: o.active === false ? "inactive" : "active" }))));
+    });
+    if (!offers.length && !box.childNodes.length) box.append(el("span", { class: "muted", text: "No offers yet." }));
+    drawStockRows();
+  }
+  $("createOffer").addEventListener("click", async () => {
+    say("offerMsg", "Creating offer…");
+    try {
+      await api("supplier", "/api/v1/internal/offers/" + supplierId + "/offers", { method: "POST", body: {
+        productId: $("oProduct").value, supplierSku: $("oSku").value.trim(), price: Number($("oPrice").value),
+        currency: $("oCurrency").value.trim().toUpperCase(), condition: $("oCondition").value, handlingDays: Number($("oDays").value) } });
+      say("offerMsg", "Offer created. Push stock for it below.", "ok");
+      loadOffers();
+    } catch (e) { say("offerMsg", e.message, "bad"); }
+  });
+
+  // ----- inventory push
+  const offerId = (o) => o.offerId || o.id;
+  function stockRow() {
+    const offerSel = el("select", { "aria-label": "Offer" }, ...offers.map((o) => { const p = products.find((x) => x.id === o.productId); return el("option", { value: offerId(o), text: (p ? p.title : o.supplierSku) + " · " + money(o.price, o.currency) }); }));
+    const whSel = el("select", { "aria-label": "Warehouse" }, ...warehouses.map((w) => el("option", { value: w.id || w.warehouseId, text: (w.name || w.code) })));
+    const qty = el("input", { type: "number", min: "0", value: "10", "aria-label": "Quantity on hand" });
+    const rm = el("button", { type: "button", text: "Remove" });
+    const row = el("div", { class: "stockrow" }, el("label", {}, "Offer", offerSel), el("label", {}, "Warehouse", whSel), el("label", {}, "Quantity", qty), rm);
+    rm.addEventListener("click", () => row.remove());
+    row.read = () => ({ supplierProductId: offerSel.value, warehouseId: whSel.value, quantityOnHand: Number(qty.value) });
+    return row;
+  }
+  function drawStockRows() {
+    const box = $("stockRows"); box.textContent = "";
+    if (!offers.length || !warehouses.length) { box.append(el("span", { class: "muted", text: "Create at least one warehouse and one offer to push stock." })); return; }
+    box.append(stockRow());
+  }
+  $("addRow").addEventListener("click", () => { if (offers.length && warehouses.length) { if ($("stockRows").firstChild && !$("stockRows").firstChild.read) $("stockRows").textContent = ""; $("stockRows").append(stockRow()); } });
+  $("refreshLists").addEventListener("click", async () => { await loadProducts(); await loadWarehouses(); await loadOffers(); });
+  $("pushStock").addEventListener("click", async () => {
+    const items = [...$("stockRows").children].filter((r) => r.read).map((r) => r.read());
+    if (!items.length) { say("stockMsg", "Add a row first.", "bad"); return; }
+    say("stockMsg", "Pushing stock…");
+    try {
+      const res = body(await api("inventory", "/api/v1/inventory/bulk-upsert", { method: "POST", body: { supplierId, items } }));
+      const box = $("stockResult"); box.textContent = "";
+      const failed = (res.results || []).filter((r) => r.status === "FAILED");
+      say("stockMsg", failed.length
+        ? failed.length + " of " + (res.totalProcessed || items.length) + " rows were not applied."
+        : "Stock pushed. Current levels:", failed.length ? "bad" : "ok");
+      failed.forEach((r) => box.append(el("div", { class: "item" }, el("span", { class: "mono", text: r.supplierProductId }), el("span", { class: "chip bad", text: r.errorMessage || "failed" }))));
+      for (const it of items.filter((x) => !failed.some((f) => f.supplierProductId === x.supplierProductId && f.warehouseId === x.warehouseId))) {
+        try {
+          const inv = (body(await api("inventory", "/api/v1/inventory/" + it.supplierProductId)).inventories || []).find((x) => x.warehouseId === it.warehouseId);
+          box.append(el("div", { class: "item" }, el("span", { class: "mono", text: it.supplierProductId }), inv ? el("span", {}, "on hand " + inv.quantityOnHand + " · reserved " + inv.quantityReserved + " · available " + inv.availableQuantity) : el("span", { class: "muted", text: "not found" })));
+        } catch (e) { box.append(el("div", { class: "item" }, el("span", { class: "mono", text: it.supplierProductId }), el("span", { class: "muted", text: e.message }))); }
+      }
+    } catch (e) { say("stockMsg", e.message, "bad"); }
+  });
+
+  showSupplier();
+  loadCatalogueChoices();
+  loadProducts().then(() => { if (supplierId) { loadWarehouses(); loadOffers(); } });
+  drawStockRows();
+})();
+</script>
+</body>
+</html>
