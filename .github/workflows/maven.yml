@@ -110,13 +110,15 @@ jobs:
             .
 
       # ── Smoke-test: the container boots and reports healthy ────────────────
-      # There is no Oracle database in CI. Flyway is switched off and no wallet is supplied, so the
+      # There is no Oracle database in CI. The dialect is set explicitly and JDBC metadata access is off, so Hibernate never has to ask a database for it. Flyway is switched off and no wallet is supplied, so the
       # app starts without ever opening a connection; the liveness probe does not touch the database.
       - name: Smoke-test — container starts and is live
         run: |
           docker run -d --name order-smoke -p 8086:8086 \
             -e DB_PASSWORD=ci-placeholder \
             -e SPRING_FLYWAY_ENABLED=false \
+            -e SPRING_JPA_DATABASE_PLATFORM=org.hibernate.dialect.OracleDialect \
+            -e SPRING_JPA_PROPERTIES_HIBERNATE_BOOT_ALLOW_JDBC_METADATA_ACCESS=false \
             ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
           for i in $(seq 1 30); do
