@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * The two ways a checkout saga ends (TDD §12.6, §12.12):
@@ -146,6 +147,11 @@ public class OrderLifecycleService implements Service<OrderLifecycleServiceReque
         data.put("currency", order.currency());
         if (reason != null) {
             data.put("reason", reason);
+        }
+        if ("ORDER_CONFIRMED".equals(type)) {
+            // the confirmation email lists what was bought
+            data.put("items", order.items().stream().map(i -> Map.of(
+                    "title", i.title(), "quantity", i.quantity(), "unitPrice", i.unitPrice())).toList());
         }
         return OrderEvents.envelope(json, type, clock.instant(), data);
     }
